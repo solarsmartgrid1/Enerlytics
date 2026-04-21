@@ -14,7 +14,7 @@ import {
 import { initializeApp } from "firebase/app";
 import { getAnalytics } from "firebase/analytics";
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import { getFirestore, doc, onSnapshot, setDoc } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAYnzbwy3L1gEMwFNoGBMrGt-Ck74g_xDo",
@@ -45,11 +45,11 @@ const TARIFF = { BUY: 0.15, SELL: 0.05 };
 const modernCard = "bg-white dark:bg-[#12121A] border border-slate-200 dark:border-[#2A2A35] rounded-xl shadow-[0_2px_8px_-2px_rgba(0,0,0,0.05)] dark:shadow-[0_2px_8px_-2px_rgba(0,0,0,0.4)] transition-all duration-200 hover:shadow-md";
 const modernButton = "flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium transition-all active:scale-[0.98]";
 
-// Compacted Client Names
+// Compacted Client Names for minimal Dropdown
 const MOCK_CLIENTS = [
-  { id: 'rvce_hardware', name: 'RVCE (Main Hardware)', type: 'real' },
-  { id: 'client_001', name: 'Simulated Client Alpha', type: 'sim' },
-  { id: 'client_002', name: 'Simulated Client Beta', type: 'sim' }
+  { id: 'rvce_hardware', name: 'RVCE', type: 'real' },
+  { id: 'client_001', name: 'Alpha', type: 'sim' },
+  { id: 'client_002', name: 'Beta', type: 'sim' }
 ];
 
 const mapWmoToState = (code) => {
@@ -153,30 +153,66 @@ const DataProvider = ({ children, user }) => {
     fetchWeather();
   }, []);
 
-  // Data Simulation based on Active Client
+  // Sync with Firestore for RVCE hardware OR Simulate for demo clients
   useEffect(() => {
-    const interval = setInterval(() => {
-      setLiveData(prev => {
-        const isRVCE = activeClientId === 'rvce_hardware';
-        const variance = isRVCE ? 4 : 1; 
-        const baseLoad = isRVCE ? 45 : 20;
+    let unsub = null;
+    let interval = null;
 
-        const newSolarP = Math.max(0, prev.solar.power + (Math.random() * variance - (variance/2)));
-        const newLoadP = Math.max(10, baseLoad + (Math.random() * 2 - 1));
-        
-        return {
-          ...prev,
-          solar: { ...prev.solar, power: Number(newSolarP.toFixed(1)) },
-          load: { ...prev.load, power: Number(newLoadP.toFixed(1)) },
-          grid: { ...prev.grid, importExport: Number((newLoadP - newSolarP).toFixed(1)) }
-        };
-      });
-    }, 2000);
-    return () => clearInterval(interval);
+    if (activeClientId === 'rvce_hardware' && db) {
+      // REAL-TIME FIRESTORE LISTENER FOR ESP32
+      const docRef = doc(db, 'devices', 'rvce_hardware');
+      unsub = onSnapshot(docRef, (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setLiveData(prev => ({
+            ...prev,
+            solar: data.solar || prev.solar,
+            battery: data.battery || prev.battery,
+            load: data.load || prev.load,
+            grid: data.grid || prev.grid,
+            relays: data.relays || prev.relays,
+          }));
+        }
+      }, (err) => console.error("Firestore Listen Error:", err));
+    } else {
+      // SIMULATED DATA FOR ALPHA/BETA
+      interval = setInterval(() => {
+        setLiveData(prev => {
+          const newSolarP = Math.max(0, prev.solar.power + (Math.random() * 2 - 1));
+          const newLoadP = Math.max(10, 20 + (Math.random() * 2 - 1));
+          return {
+            ...prev,
+            solar: { ...prev.solar, power: Number(newSolarP.toFixed(1)) },
+            load: { ...prev.load, power: Number(newLoadP.toFixed(1)) },
+            grid: { ...prev.grid, importExport: Number((newLoadP - newSolarP).toFixed(1)) }
+          };
+        });
+      }, 2000);
+    }
+
+    return () => {
+      if (unsub) unsub();
+      if (interval) clearInterval(interval);
+    };
   }, [activeClientId]);
 
+  // API to push Relay updates directly to Firebase
   const api = {
-    updateRelay: (key, value) => setLiveData(prev => ({ ...prev, relays: { ...prev.relays, [key]: value } })),
+    updateRelay: async (key, value) => {
+      if (activeClientId === 'rvce_hardware' && db) {
+        // Optimistic UI Update
+        setLiveData(prev => ({ ...prev, relays: { ...prev.relays, [key]: value } }));
+        // Push to ESP32 Database
+        try {
+          const docRef = doc(db, 'devices', 'rvce_hardware');
+          await setDoc(docRef, { relays: { [key]: value } }, { merge: true });
+        } catch (e) {
+          addToast("Hardware Sync Failed.", "error");
+        }
+      } else {
+        setLiveData(prev => ({ ...prev, relays: { ...prev.relays, [key]: value } }));
+      }
+    },
     resetBilling: () => setLiveData(prev => ({ ...prev, billing: { imported: 0, exported: 0, lastReset: new Date().toISOString() } })),
     deleteUser: (id) => setUsers(prev => prev.filter(u => u.id !== id)),
     addUser: (user) => setUsers(prev => [...prev, { ...user, id: Date.now(), status: 'offline', lastActive: 'Never' }])
@@ -259,7 +295,6 @@ const LoginPage = () => {
     setError('');
     setLoading(true);
 
-    // Map Usernames to Firebase Emails for background auth
     const emailMap = {
       'Admin': 'admin@solarenerlytics.com',
       'RVCE': 'rvce@solarenerlytics.com',
@@ -277,23 +312,21 @@ const LoginPage = () => {
       if (auth) {
         await signInWithEmailAndPassword(auth, email, password);
       } else {
-        // Fallback if Firebase fails to init
         fallbackLogin();
       }
     } catch (err) {
-      // Auto-create account for seamless demo if it doesn't exist
       if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
         try {
           await createUserWithEmailAndPassword(auth, email, password);
         } catch (createErr) {
           if (createErr.code === 'auth/configuration-not-found' || createErr.code === 'auth/operation-not-allowed') {
-            fallbackLogin(); // Bypass firebase if email/password auth isn't enabled in console
+            fallbackLogin(); 
           } else {
             setError(createErr.message.replace('Firebase:', '').trim());
           }
         }
       } else if (err.code === 'auth/configuration-not-found' || err.code === 'auth/operation-not-allowed') {
-         fallbackLogin(); // Bypass firebase if email/password auth isn't enabled in console
+         fallbackLogin(); 
       } else {
         setError(err.message.replace('Firebase:', '').trim());
       }
@@ -388,8 +421,9 @@ const MainLayout = () => {
 
   return (
     <>
+      {/* Full Width Header */}
       <header className="sticky top-0 z-50 w-full bg-white dark:bg-[#12121A] border-b border-slate-200 dark:border-[#2A2A35] shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="w-full px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between py-2 sm:py-0 sm:h-16 gap-2 sm:gap-0">
             
             <div className="flex justify-between items-center w-full sm:w-auto pr-0 sm:pr-8 border-r-0 sm:border-r border-slate-200 dark:border-[#2A2A35] h-full">
@@ -456,9 +490,9 @@ const MainLayout = () => {
                 {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
               </button>
               
-              {/* COMPACT LOGOUT AREA */}
+              {/* ULTRA MINIMAL LOGOUT AREA */}
               <div className="flex items-center gap-2 border-l border-slate-200 dark:border-[#2A2A35] pl-3 ml-1">
-                <div className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                <div className="text-sm font-semibold text-slate-700 dark:text-slate-300">
                   {user.name}
                 </div>
                 <button onClick={handleLogout} className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-md transition-colors" title="Logout">
@@ -471,7 +505,8 @@ const MainLayout = () => {
         </div>
       </header>
 
-      <main className="flex-1 w-full max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
+      {/* Full Width Main Area */}
+      <main className="flex-1 w-full p-4 sm:p-6 lg:p-8">
         <div className="mb-6 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
            <div>
               <h1 className="text-2xl font-bold text-slate-900 dark:text-white capitalize">
