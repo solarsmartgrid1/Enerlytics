@@ -42,14 +42,14 @@ try {
 // ==========================================
 const TARIFF = { BUY: 0.15, SELL: 0.05 };
 
-const modernCard = "bg-white dark:bg-[#12121A] border border-slate-200 dark:border-[#2A2A35] rounded-xl shadow-[0_2px_8px_-2px_rgba(0,0,0,0.05)] dark:shadow-[0_2px_8px_-2px_rgba(0,0,0,0.4)] transition-all duration-200";
+const modernCard = "bg-white dark:bg-[#12121A] border border-slate-200 dark:border-[#2A2A35] rounded-xl shadow-[0_2px_8px_-2px_rgba(0,0,0,0.05)] dark:shadow-[0_2px_8px_-2px_rgba(0,0,0,0.4)] transition-all duration-200 hover:shadow-md";
 const modernButton = "flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium transition-all active:scale-[0.98]";
 
 // Compacted Client Names
 const MOCK_CLIENTS = [
-  { id: 'rvce_hardware', name: 'RVCE', type: 'real' },
-  { id: 'client_001', name: 'Alpha', type: 'sim' },
-  { id: 'client_002', name: 'Beta', type: 'sim' }
+  { id: 'rvce_hardware', name: 'RVCE (Main Hardware)', type: 'real' },
+  { id: 'client_001', name: 'Simulated Client Alpha', type: 'sim' },
+  { id: 'client_002', name: 'Simulated Client Beta', type: 'sim' }
 ];
 
 const mapWmoToState = (code) => {
@@ -206,7 +206,7 @@ export default function App() {
         const email = firebaseUser.email || '';
         if (email.includes('admin')) setUser({ id: 'admin_sys', name: 'Admin', role: 'admin' });
         else if (email.includes('rvce')) setUser({ id: 'rvce_hardware', name: 'RVCE', role: 'user' });
-        else setUser({ id: 'client_001', name: 'Alpha', role: 'user' });
+        else setUser({ id: 'client', name: 'Alpha Client', role: 'user' });
       } else {
         setUser(null);
       }
@@ -219,7 +219,7 @@ export default function App() {
     document.body.className = `${theme} bg-[#F8FAFC] dark:bg-[#09090E] text-slate-900 dark:text-slate-100 transition-colors duration-300 selection:bg-emerald-500/30`;
   }, [theme]);
 
-  if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] dark:bg-[#09090E] text-slate-500">Connecting to Firebase...</div>;
+  if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] dark:bg-[#09090E] text-slate-500">Connecting to System...</div>;
 
   return (
     <ThemeContext.Provider value={{ theme, toggleTheme }}>
@@ -259,7 +259,7 @@ const LoginPage = () => {
     setError('');
     setLoading(true);
 
-    // Map Usernames to Firebase Emails
+    // Map Usernames to Firebase Emails for background auth
     const emailMap = {
       'Admin': 'admin@solarenerlytics.com',
       'RVCE': 'rvce@solarenerlytics.com',
@@ -270,7 +270,7 @@ const LoginPage = () => {
     const fallbackLogin = () => {
       if (username === 'Admin') setUser({ id: 'admin_sys', name: 'Admin', role: 'admin' });
       else if (username === 'RVCE') setUser({ id: 'rvce_hardware', name: 'RVCE', role: 'user' });
-      else setUser({ id: 'client_001', name: 'Alpha', role: 'user' });
+      else setUser({ id: 'client_001', name: 'Alpha Client', role: 'user' });
     };
 
     try {
@@ -365,7 +365,11 @@ const MainLayout = () => {
   const filteredNav = NAV_ITEMS.filter(item => item.roles.includes(user.role));
 
   const handleLogout = async () => {
-    if (auth) await signOut(auth);
+    if (auth) {
+      try {
+        await signOut(auth);
+      } catch (e) {}
+    }
     setUser(null);
     addToast('Logged out securely', 'info');
   };
