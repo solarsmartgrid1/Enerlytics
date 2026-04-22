@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useContext, createContext } from 'react';
+import React, { useState, useEffect, useContext, createContext, useMemo } from 'react';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer 
 } from 'recharts';
@@ -14,7 +14,7 @@ import {
 import { initializeApp } from "firebase/app";
 import { getAnalytics } from "firebase/analytics";
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from "firebase/auth";
-import { getFirestore, doc, onSnapshot, setDoc } from "firebase/firestore";
+import { getFirestore, doc, onSnapshot, setDoc, collection, query, orderBy, limit } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAYnzbwy3L1gEMwFNoGBMrGt-Ck74g_xDo",
@@ -86,27 +86,6 @@ const ThemeContext = createContext();
 const ToastContext = createContext();
 const DataContext = createContext();
 
-const generateInitialHistory = () => {
-  const history = [];
-  let now = Date.now();
-  for (let i = 0; i < 50; i++) {
-    const timeMs = now - ((50 - i) * 3000); 
-    const dateObj = new Date(timeMs);
-    history.push({
-      id: timeMs,
-      timestamp: dateObj.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
-      shortTime: dateObj.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
-      solarV: (12 + Math.random() * 3).toFixed(1),
-      solarI: (2 + Math.random() * 3).toFixed(1),
-      solarP: (30 + Math.random() * 40).toFixed(1),
-      batteryPct: Math.floor(60 + Math.random() * 40),
-      loadP: (20 + Math.random() * 20).toFixed(1),
-      gridStatus: Math.random() > 0.5 ? 'Exporting' : 'Importing'
-    });
-  }
-  return history.reverse(); 
-};
-
 // ==========================================
 // 3. PROVIDERS
 // ==========================================
@@ -159,30 +138,29 @@ const DataProvider = ({ children, user }) => {
     { id: 3, name: 'Client Beta', role: 'user', deviceId: 'SIM-002' }
   ]);
 
-  // Clear history when switching to REAL hardware so we don't mix fake data
-  useEffect(() => {
-    if (activeClientId === 'rvce_hardware') {
-      setHistory([]); 
-    } else {
-      setHistory(generateInitialHistory());
-    }
-  }, [activeClientId]);
+  const handleClientChange = (id) => {
+    setActiveClientId(id);
+    setHistory([]); // Clear history on switch
+  };
 
-  const appendHistory = (dataObj, timeMs) => {
+  // Local history generator for simulated clients ONLY
+  const appendLocalHistory = (dataObj, timeMs) => {
+    const dateObj = new Date(timeMs);
+    const newEntry = {
+      id: timeMs,
+      timestamp: dateObj.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
+      shortTime: dateObj.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
+      solarV: dataObj.solar.voltage.toFixed(1),
+      solarI: dataObj.solar.current.toFixed(1),
+      solarP: dataObj.solar.power.toFixed(1),
+      batteryPct: Math.round(dataObj.battery.percentage),
+      loadP: dataObj.load.power.toFixed(1),
+      gridStatus: dataObj.grid.importExport < 0 ? 'Exporting' : 'Importing'
+    };
+
     setHistory(prev => {
-      const dateObj = new Date(timeMs);
-      const newEntry = {
-        id: timeMs,
-        timestamp: dateObj.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
-        shortTime: dateObj.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
-        solarV: dataObj.solar.voltage.toFixed(1),
-        solarI: dataObj.solar.current.toFixed(1),
-        solarP: dataObj.solar.power.toFixed(1),
-        batteryPct: Math.round(dataObj.battery.percentage),
-        loadP: dataObj.load.power.toFixed(1),
-        gridStatus: dataObj.grid.importExport < 0 ? 'Exporting' : 'Importing'
-      };
-      return [newEntry, ...prev].slice(0, 50); 
+      if (prev.length > 0 && prev[0].id === timeMs) return prev;
+      return [newEntry, ...prev].slice(0, 100); 
     });
   };
 
@@ -240,51 +218,71 @@ const DataProvider = ({ children, user }) => {
     }
   }, [liveData.battery.percentage, liveData.relays.mode, liveData.weather.current, activeClientId]);
 
-  // Sync with Firestore
+  // Sync with Firestore (PURE FETCH FOR HARDWARE)
   useEffect(() => {
-    let unsub = null;
+    let unsubLive = null;
+    let unsubHist = null;
     let interval = null;
 
     if (activeClientId === 'rvce_hardware' && db) {
+      // 1. Listen to Live Hardware State
       const docRef = doc(db, 'devices', 'rvce_hardware');
-      unsub = onSnapshot(docRef, (docSnap) => {
+      unsubLive = onSnapshot(docRef, (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data();
-          // Use the exact timestamp pushed by the ESP32 (fallback to Date.now if missing)
           const espTime = data.timestamp ? parseInt(data.timestamp) * 1000 : Date.now();
           
-          setLiveData(prev => {
-            // Prevent duplicate history entries for the exact same hardware timestamp
-            if (prev.timestamp === espTime) return prev;
-
-            const updatedData = {
-              ...prev,
-              timestamp: espTime,
-              solar: {
-                voltage: data.solar?.voltage ?? prev.solar.voltage,
-                current: data.solar?.current ?? prev.solar.current,
-                power: data.solar?.power ?? prev.solar.power
-              },
-              battery: {
-                percentage: data.battery?.percentage ?? prev.battery.percentage,
-                voltage: data.battery?.voltage ?? prev.battery.voltage,
-                temp: data.battery?.temp ?? prev.battery.temp
-              },
-              load: {
-                power: data.load?.power ?? prev.load.power
-              },
-              grid: {
-                voltage: data.grid?.voltage ?? prev.grid.voltage,
-                importExport: data.grid?.importExport ?? prev.grid.importExport
-              },
-              relays: data.relays || prev.relays,
-            };
-            appendHistory(updatedData, espTime);
-            return updatedData;
-          });
+          setLiveData(prev => ({
+            ...prev,
+            timestamp: espTime,
+            solar: {
+              voltage: data.solar?.voltage ?? prev.solar.voltage,
+              current: data.solar?.current ?? prev.solar.current,
+              power: data.solar?.power ?? prev.solar.power
+            },
+            battery: {
+              percentage: data.battery?.percentage ?? prev.battery.percentage,
+              voltage: data.battery?.voltage ?? prev.battery.voltage,
+              temp: data.battery?.temp ?? prev.battery.temp
+            },
+            load: {
+              power: data.load?.power ?? prev.load.power
+            },
+            grid: {
+              voltage: data.grid?.voltage ?? prev.grid.voltage,
+              importExport: data.grid?.importExport ?? prev.grid.importExport
+            },
+            relays: data.relays || prev.relays,
+          }));
         }
       });
+
+      // 2. Pure Fetch from Firebase History (No writing from Web)
+      const histQuery = query(collection(db, 'devices', 'rvce_hardware', 'history'), orderBy('id', 'desc'), limit(100));
+      unsubHist = onSnapshot(histQuery, (snap) => {
+        const fetchedHist = snap.docs.map(d => {
+          const raw = d.data();
+          if (raw.shortTime) return raw; // Legacy format fallback
+          
+          // Map raw ESP32 JSON payload to Web UI format
+          const dateObj = new Date(parseInt(raw.id));
+          return {
+            id: parseInt(raw.id),
+            timestamp: dateObj.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
+            shortTime: dateObj.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
+            solarV: (parseFloat(raw.solarV) || 0).toFixed(1),
+            solarI: (parseFloat(raw.solarI) || 0).toFixed(1),
+            solarP: (parseFloat(raw.solarP) || 0).toFixed(1),
+            batteryPct: parseInt(raw.batteryPct) || 0,
+            loadP: (parseFloat(raw.loadP) || 0).toFixed(1),
+            gridStatus: (parseFloat(raw.gridExport) || 0) < 0 ? 'Exporting' : 'Importing'
+          };
+        });
+        setHistory(fetchedHist);
+      });
+
     } else {
+      // Simulator for non-hardware clients
       interval = setInterval(() => {
         const simTime = Date.now();
         setLiveData(prev => {
@@ -303,14 +301,15 @@ const DataProvider = ({ children, user }) => {
             load: { ...prev.load, power: Number(newLoadP.toFixed(1)) },
             grid: { ...prev.grid, importExport: Number((newLoadP - newSolarP).toFixed(1)) }
           };
-          appendHistory(updatedData, simTime);
+          appendLocalHistory(updatedData, simTime);
           return updatedData;
         });
       }, 3000);
     }
 
     return () => {
-      if (unsub) unsub();
+      if (unsubLive) unsubLive();
+      if (unsubHist) unsubHist();
       if (interval) clearInterval(interval);
     };
   }, [activeClientId]);
@@ -329,7 +328,7 @@ const DataProvider = ({ children, user }) => {
     }
   };
 
-  return <DataContext.Provider value={{ liveData, history, users, api, activeClientId, setActiveClientId, clients: MOCK_CLIENTS }}>{children}</DataContext.Provider>;
+  return <DataContext.Provider value={{ liveData, history, users, api, activeClientId, setActiveClientId: handleClientChange, clients: MOCK_CLIENTS }}>{children}</DataContext.Provider>;
 };
 
 // ==========================================
@@ -338,7 +337,6 @@ const DataProvider = ({ children, user }) => {
 const LiveStatusBadge = ({ timestamp }) => {
   const [isLive, setIsLive] = useState(true);
 
-  // Monitor freshness (15s threshold based on actual data timestamp)
   useEffect(() => {
     const checkLive = () => setIsLive(Date.now() - timestamp < 15000);
     checkLive();
@@ -360,9 +358,9 @@ const LiveStatusBadge = ({ timestamp }) => {
   }
 
   return (
-    <div className="flex items-center gap-1 px-2 py-1 bg-slate-100 dark:bg-[#1A1A24] text-slate-500 dark:text-slate-400 rounded text-[9px] font-bold border border-slate-200 dark:border-[#2A2A35] max-w-[110px] text-center leading-tight transition-all shrink-0">
-      <Clock className="w-3 h-3 shrink-0" />
-      <span>Last: {formattedDate}</span>
+    <div className="flex items-center gap-1.5 px-2 py-1 bg-slate-100 dark:bg-[#1A1A24] text-slate-500 dark:text-slate-400 rounded text-[10px] font-bold border border-slate-200 dark:border-[#2A2A35] transition-all shrink-0">
+      <Clock className="w-3 h-3 opacity-60" />
+      <span className="whitespace-nowrap truncate max-w-[120px]">{formattedDate}</span>
     </div>
   );
 };
@@ -543,12 +541,12 @@ const MainLayout = () => {
         <div className="w-full px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between py-2 sm:py-0 sm:h-16 gap-2 sm:gap-0">
             
-            <div className="flex justify-between items-center w-full sm:w-auto pr-0 sm:pr-8 border-r-0 sm:border-r border-slate-200 dark:border-[#2A2A35] h-full">
+            <div className="flex justify-between items-center w-full sm:w-auto pr-0 sm:pr-8 border-r-0 sm:border-r border-slate-200 dark:border-[#2A2A35] h-full shrink-0">
               <button onClick={() => setCurrentPage('dashboard')} className="flex items-center gap-2.5 transition-opacity hover:opacity-80">
                 <div className="bg-slate-900 dark:bg-white p-1.5 rounded text-white dark:text-slate-900">
                   <Zap className="w-4 h-4" />
                 </div>
-                <span className="font-bold text-lg tracking-tight text-slate-900 dark:text-white">Solar Enerlytics</span>
+                <span className="font-bold text-lg tracking-tight text-slate-900 dark:text-white hidden md:block">Solar Enerlytics</span>
               </button>
 
               <div className="flex sm:hidden items-center gap-2">
@@ -574,7 +572,7 @@ const MainLayout = () => {
               </div>
             </nav>
 
-            <div className="hidden sm:flex items-center gap-3 pl-6">
+            <div className="hidden sm:flex items-center gap-3 pl-6 shrink-0">
               {user.role === 'admin' && (
                 <div className="flex items-center gap-2 bg-slate-50 dark:bg-[#1A1A24] border border-slate-200 dark:border-[#2A2A35] px-2.5 py-1.5 rounded-lg shadow-inner mr-2">
                   <Users className="w-3.5 h-3.5 text-emerald-500" />
@@ -591,7 +589,6 @@ const MainLayout = () => {
               </button>
               
               <div className="flex items-center gap-2 border-l border-slate-200 dark:border-[#2A2A35] pl-3 ml-1">
-                <div className="text-sm font-semibold text-slate-700 dark:text-slate-300">{user.name}</div>
                 <button onClick={handleLogout} className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-md transition-colors" title="Logout">
                   <LogOut className="w-4 h-4" />
                 </button>
@@ -628,12 +625,21 @@ const DashboardPage = () => {
   const { theme } = useContext(ThemeContext);
   const isRVCE = activeClientId === 'rvce_hardware';
 
-  // Construct chart data directly from dynamic history logs
-  const chartData = [...history].reverse().map(h => ({
-    time: h.shortTime,
-    solar: parseFloat(h.solarP),
-    load: parseFloat(h.loadP)
-  }));
+  // 1 Hour Graph Data
+  const getOneHourChartData = () => {
+    const oneHourAgo = Date.now() - 3600000; // 1 hour in ms
+    let recentHistory = history.filter(h => h.id >= oneHourAgo);
+    
+    // Sub-sample to ~60 points max so browser graph doesn't lag if ESP sends 1200 points/hr
+    const sampleRate = Math.ceil(recentHistory.length / 60) || 1;
+    return recentHistory.filter((_, i) => i % sampleRate === 0).reverse().map(h => ({
+      time: h.shortTime,
+      solar: parseFloat(h.solarP),
+      load: parseFloat(h.loadP)
+    }));
+  };
+
+  const chartData = getOneHourChartData();
 
   return (
     <div className="space-y-6">
@@ -655,7 +661,7 @@ const DashboardPage = () => {
         <div className={`lg:col-span-2 ${modernCard} p-5`}>
           <div className="flex justify-between items-center mb-6">
             <h3 className="font-semibold text-sm uppercase tracking-wider text-slate-500 dark:text-slate-400">Power Distribution</h3>
-            <span className="text-xs font-bold px-2 py-1 bg-slate-100 dark:bg-[#1A1A24] text-slate-600 dark:text-slate-400 rounded">Live Feed</span>
+            <span className="text-xs font-bold px-2 py-1 bg-slate-100 dark:bg-[#1A1A24] text-slate-600 dark:text-slate-400 rounded">1H Timeline</span>
           </div>
           <div className="h-64">
             {chartData.length > 0 ? (
@@ -903,17 +909,104 @@ const RelayPage = () => {
 const HistoryPage = () => {
   const { history } = useContext(DataContext);
   const { addToast } = useContext(ToastContext);
+  const [filter, setFilter] = useState('1h');
+
+  // Aggregation Logic for Data Logs
+  const getGroupedHistory = (hist, filterType) => {
+    let cutoff = Date.now();
+    let bucketSizeMs = 60000; // 1 min
+
+    if (filterType === '1h') { cutoff -= 3600000; bucketSizeMs = 60000; }
+    else if (filterType === '6h') { cutoff -= 6 * 3600000; bucketSizeMs = 5 * 60000; }
+    else if (filterType === '12h') { cutoff -= 12 * 3600000; bucketSizeMs = 10 * 60000; }
+    else if (filterType === '1d') { cutoff -= 24 * 3600000; bucketSizeMs = 10 * 60000; }
+    else if (filterType === '7d') { cutoff -= 7 * 24 * 3600000; bucketSizeMs = 30 * 60000; }
+    else if (filterType === '1mo') { cutoff -= 30 * 24 * 3600000; bucketSizeMs = 120 * 60000; }
+
+    const filtered = hist.filter(h => h.id >= cutoff);
+    const buckets = {};
+    
+    filtered.forEach(h => {
+       const bucketTime = Math.floor(h.id / bucketSizeMs) * bucketSizeMs;
+       if (!buckets[bucketTime]) {
+          buckets[bucketTime] = { count: 0, solarV: 0, solarI: 0, solarP: 0, batteryPct: 0, loadP: 0, exportCount: 0 };
+       }
+       buckets[bucketTime].count++;
+       buckets[bucketTime].solarV += parseFloat(h.solarV);
+       buckets[bucketTime].solarI += parseFloat(h.solarI);
+       buckets[bucketTime].solarP += parseFloat(h.solarP);
+       buckets[bucketTime].batteryPct += h.batteryPct;
+       buckets[bucketTime].loadP += parseFloat(h.loadP);
+       if (h.gridStatus === 'Exporting') buckets[bucketTime].exportCount++;
+    });
+
+    return Object.keys(buckets).map(timeMs => {
+       const b = buckets[timeMs];
+       const c = b.count;
+       const d = new Date(parseInt(timeMs));
+       return {
+          id: parseInt(timeMs),
+          timestamp: d.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }),
+          solarV: (b.solarV / c).toFixed(1),
+          solarI: (b.solarI / c).toFixed(1),
+          solarP: (b.solarP / c).toFixed(1),
+          batteryPct: Math.round(b.batteryPct / c),
+          loadP: (b.loadP / c).toFixed(1),
+          gridStatus: (b.exportCount / c) > 0.5 ? 'Exporting' : 'Importing'
+       };
+    }).sort((a,b) => b.id - a.id);
+  };
+
+  const displayHistory = getGroupedHistory(history, filter);
+
+  // Export to Real CSV Function
+  const handleExportCSV = () => {
+    if (displayHistory.length === 0) return addToast('No data to export.', 'error');
+    
+    const headers = ["Timestamp", "PV Input (V)", "PV Input (A)", "PV Input (W)", "Battery SoC (%)", "Load (W)", "Grid Status"];
+    const rows = displayHistory.map(r => [
+      `"${r.timestamp}"`, r.solarV, r.solarI, r.solarP, r.batteryPct, r.loadP, r.gridStatus
+    ]);
+    
+    const csvContent = "data:text/csv;charset=utf-8," + headers.join(",") + "\n" + rows.map(e => e.join(",")).join("\n");
+    
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `Telemetry_Export_${filter}_${new Date().getTime()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    addToast('CSV download complete.', 'success');
+  };
 
   return (
     <div className={`${modernCard} overflow-hidden flex flex-col h-[calc(100vh-12rem)]`}>
-      <div className="p-4 border-b border-slate-200 dark:border-[#2A2A35] flex justify-between items-center bg-slate-50/50 dark:bg-[#1A1A24]/50">
+      <div className="p-4 border-b border-slate-200 dark:border-[#2A2A35] flex flex-col sm:flex-row justify-between items-center gap-4 bg-slate-50/50 dark:bg-[#1A1A24]/50">
         <div>
           <h2 className="text-base font-bold text-slate-900 dark:text-white">Node Telemetry Logs</h2>
-          <p className="text-xs font-medium text-slate-500">Exact snapshot timeline synced with ESP32 data bursts.</p>
+          <p className="text-xs font-medium text-slate-500">Historical snapshot timeline synced with device telemetry.</p>
         </div>
-        <button onClick={() => addToast('Exporting dataset...', 'success')} className={`${modernButton} bg-white dark:bg-[#2A2A35] text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-[#3A3A45] hover:bg-slate-50 dark:hover:bg-[#3A3A45] shadow-sm text-xs py-1.5`}>
-          <Download className="w-3.5 h-3.5" /> Export CSV
-        </button>
+        
+        <div className="flex items-center gap-3">
+          <select 
+            value={filter} 
+            onChange={(e) => setFilter(e.target.value)}
+            className="bg-white dark:bg-[#1A1A24] border border-slate-200 dark:border-[#3A3A45] text-slate-700 dark:text-slate-300 text-xs px-3 py-1.5 rounded-lg outline-none cursor-pointer"
+          >
+            <option value="1h">Last 1 Hour (Minute avg)</option>
+            <option value="6h">Last 6 Hours (5-Min avg)</option>
+            <option value="12h">Last 12 Hours (10-Min avg)</option>
+            <option value="1d">Last 24 Hours (10-Min avg)</option>
+            <option value="7d">Last 7 Days (30-Min avg)</option>
+            <option value="1mo">Last 30 Days (2-Hour avg)</option>
+          </select>
+
+          <button onClick={handleExportCSV} className={`${modernButton} bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-transparent shadow-sm text-xs py-1.5`}>
+            <Download className="w-3.5 h-3.5" /> Export CSV
+          </button>
+        </div>
       </div>
       <div className="flex-1 overflow-auto">
         <table className="w-full text-left text-sm whitespace-nowrap">
@@ -927,7 +1020,7 @@ const HistoryPage = () => {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-[#1A1A24]">
-            {history.map((row) => (
+            {displayHistory.map((row) => (
               <tr key={row.id} className="hover:bg-slate-50 dark:hover:bg-[#1A1A24] transition-colors">
                 <td className="px-5 py-3 font-mono text-xs text-slate-500">{row.timestamp}</td>
                 <td className="px-5 py-3 font-medium text-slate-700 dark:text-slate-300">{row.solarV}V / {row.solarI}A / {row.solarP}W</td>
@@ -947,6 +1040,11 @@ const HistoryPage = () => {
                 </td>
               </tr>
             ))}
+            {displayHistory.length === 0 && (
+              <tr>
+                <td colSpan="5" className="text-center py-8 text-slate-400 text-sm">No historical data found for the selected time range.</td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -959,71 +1057,32 @@ const BillingPage = () => {
   const netTotal = (liveData.billing.imported * TARIFF.BUY) - (liveData.billing.exported * TARIFF.SELL);
 
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+    <div className="max-w-4xl space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className={`${modernCard} p-6 flex flex-col justify-center`}>
-          <div className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-2 flex items-center gap-2"><ArrowRightLeft className="w-3.5 h-3.5 text-orange-500"/> Total Grid Import</div>
-          <div className="text-4xl font-bold text-slate-900 dark:text-white mb-2">{liveData.billing.imported.toFixed(1)} <span className="text-lg font-medium text-slate-400">kWh</span></div>
-          <div className="text-sm font-semibold text-orange-500">Cost Accrued: ₹{(liveData.billing.imported * TARIFF.BUY).toFixed(2)}</div>
+          <div className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1 flex items-center gap-2"><ArrowRightLeft className="w-3 h-3 text-orange-500"/> Grid Import</div>
+          <div className="text-3xl font-bold text-slate-900 dark:text-white mb-1">{liveData.billing.imported.toFixed(1)} <span className="text-sm font-medium text-slate-400">kWh</span></div>
+          <div className="text-xs font-semibold text-orange-500 border-t border-slate-100 dark:border-[#2A2A35] pt-2 mt-2">Cost: ₹{(liveData.billing.imported * TARIFF.BUY).toFixed(2)}</div>
         </div>
         <div className={`${modernCard} p-6 flex flex-col justify-center`}>
-          <div className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-2 flex items-center gap-2"><Sun className="w-3.5 h-3.5 text-emerald-500"/> Total Solar Export</div>
-          <div className="text-4xl font-bold text-slate-900 dark:text-white mb-2">{liveData.billing.exported.toFixed(1)} <span className="text-lg font-medium text-slate-400">kWh</span></div>
-          <div className="text-sm font-semibold text-emerald-500">Revenue Generated: ₹{(liveData.billing.exported * TARIFF.SELL).toFixed(2)}</div>
+          <div className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1 flex items-center gap-2"><Sun className="w-3 h-3 text-emerald-500"/> Solar Export</div>
+          <div className="text-3xl font-bold text-slate-900 dark:text-white mb-1">{liveData.billing.exported.toFixed(1)} <span className="text-sm font-medium text-slate-400">kWh</span></div>
+          <div className="text-xs font-semibold text-emerald-500 border-t border-slate-100 dark:border-[#2A2A35] pt-2 mt-2">Revenue: ₹{(liveData.billing.exported * TARIFF.SELL).toFixed(2)}</div>
         </div>
         <div className={`${modernCard} p-6 flex flex-col justify-center ${netTotal > 0 ? 'bg-orange-50/50 dark:bg-orange-900/10' : 'bg-emerald-50/50 dark:bg-emerald-900/10'}`}>
-          <div className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-2">Net Payable Balance</div>
-          <div className={`text-5xl font-black tracking-tight mb-2 ${netTotal > 0 ? 'text-orange-600 dark:text-orange-500' : 'text-emerald-600 dark:text-emerald-500'}`}>
+          <div className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1">Net Balance Estimate</div>
+          <div className={`text-4xl font-black tracking-tight mb-1 ${netTotal > 0 ? 'text-orange-600 dark:text-orange-500' : 'text-emerald-600 dark:text-emerald-500'}`}>
             ₹{Math.abs(netTotal).toFixed(2)}
           </div>
-          <div className="text-xs font-bold text-slate-600 dark:text-slate-400">{netTotal > 0 ? 'Outstanding due to BESCOM Utility' : 'Surplus Credit in Account'}</div>
+          <div className="text-xs font-bold text-slate-600 dark:text-slate-400 border-t border-slate-200 dark:border-[#2A2A35] pt-2 mt-2">{netTotal > 0 ? 'Due to Utility' : 'Credit from Utility'}</div>
         </div>
       </div>
       
-      <div className={`${modernCard} overflow-hidden`}>
-         <div className="p-5 border-b border-slate-200 dark:border-[#2A2A35] bg-slate-50/50 dark:bg-[#1A1A24]/50">
-           <h3 className="font-bold text-base text-slate-900 dark:text-white">Detailed Statement (Current Billing Cycle)</h3>
-           <p className="text-xs text-slate-500 mt-1">Cycle start date: {new Date(liveData.billing.lastReset).toLocaleDateString()}</p>
-         </div>
-         <div className="p-6">
-           <table className="w-full text-left">
-             <thead>
-               <tr className="border-b border-slate-200 dark:border-[#2A2A35] text-slate-500 text-sm">
-                 <th className="pb-3 font-semibold w-1/2">Description</th>
-                 <th className="pb-3 font-semibold text-right">Units (kWh)</th>
-                 <th className="pb-3 font-semibold text-right">Rate</th>
-                 <th className="pb-3 font-semibold text-right">Total Amount</th>
-               </tr>
-             </thead>
-             <tbody className="text-sm">
-               <tr className="border-b border-slate-100 dark:border-[#2A2A35]">
-                 <td className="py-4 font-medium text-slate-900 dark:text-slate-100">Base Metering Fixed Charge</td>
-                 <td className="py-4 text-right text-slate-500 dark:text-slate-400">-</td>
-                 <td className="py-4 text-right text-slate-500 dark:text-slate-400">-</td>
-                 <td className="py-4 text-right font-medium text-slate-900 dark:text-slate-100">₹150.00</td>
-               </tr>
-               <tr className="border-b border-slate-100 dark:border-[#2A2A35]">
-                 <td className="py-4 font-medium text-slate-900 dark:text-slate-100">Power Utilized from Grid</td>
-                 <td className="py-4 text-right text-slate-600 dark:text-slate-400">{liveData.billing.imported.toFixed(2)}</td>
-                 <td className="py-4 text-right text-slate-600 dark:text-slate-400">₹{TARIFF.BUY}/kWh</td>
-                 <td className="py-4 text-right font-medium text-orange-500">+ ₹{(liveData.billing.imported * TARIFF.BUY).toFixed(2)}</td>
-               </tr>
-               <tr className="border-b border-slate-200 dark:border-[#2A2A35]">
-                 <td className="py-4 font-medium text-slate-900 dark:text-slate-100">Power Sold to Grid</td>
-                 <td className="py-4 text-right text-slate-600 dark:text-slate-400">{liveData.billing.exported.toFixed(2)}</td>
-                 <td className="py-4 text-right text-slate-600 dark:text-slate-400">₹{TARIFF.SELL}/kWh</td>
-                 <td className="py-4 text-right font-medium text-emerald-500">- ₹{(liveData.billing.exported * TARIFF.SELL).toFixed(2)}</td>
-               </tr>
-               <tr>
-                 <td className="py-5 font-bold text-slate-900 dark:text-white text-base">Net Total Amount</td>
-                 <td></td>
-                 <td></td>
-                 <td className={`py-5 text-right font-black text-xl ${netTotal + 150 > 0 ? 'text-orange-500' : 'text-emerald-500'}`}>
-                   ₹{Math.abs(netTotal + 150).toFixed(2)}
-                 </td>
-               </tr>
-             </tbody>
-           </table>
+      <div className={`${modernCard} p-6 mt-4`}>
+         <h3 className="font-bold text-sm mb-4 text-slate-900 dark:text-white border-b border-slate-100 dark:border-[#2A2A35] pb-2">Tariff Structure</h3>
+         <div className="flex gap-8 text-sm">
+           <div><span className="text-slate-500">Buy Rate:</span> <span className="font-semibold text-slate-900 dark:text-white">₹{TARIFF.BUY}/kWh</span></div>
+           <div><span className="text-slate-500">Sell Rate:</span> <span className="font-semibold text-slate-900 dark:text-white">₹{TARIFF.SELL}/kWh</span></div>
          </div>
       </div>
     </div>
