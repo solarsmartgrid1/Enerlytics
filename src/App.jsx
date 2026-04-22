@@ -454,12 +454,21 @@ const LoginPage = () => {
         try {
           await createUserWithEmailAndPassword(auth, email, password);
         } catch (createErr) {
-          if (createErr.code === 'auth/configuration-not-found' || createErr.code === 'auth/operation-not-allowed') fallbackLogin(); 
-          else setError(createErr.message.replace('Firebase:', '').trim());
+          if (createErr.code === 'auth/configuration-not-found' || createErr.code === 'auth/operation-not-allowed') {
+            fallbackLogin(); 
+          } else if (createErr.code === 'auth/email-already-in-use') {
+            setError('Incorrect password for this existing account.');
+          } else {
+            setError(createErr.message.replace('Firebase:', '').trim());
+          }
         }
+      } else if (err.code === 'auth/too-many-requests') {
+         setError('Account temporarily locked due to too many failed attempts. Delete user in Firebase Console to reset.');
       } else if (err.code === 'auth/configuration-not-found' || err.code === 'auth/operation-not-allowed') {
          fallbackLogin(); 
-      } else setError(err.message.replace('Firebase:', '').trim());
+      } else {
+        setError(err.message.replace('Firebase:', '').trim());
+      }
     } finally {
       setLoading(false);
     }
