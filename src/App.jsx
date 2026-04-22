@@ -7,14 +7,15 @@ import {
   Shield, Droplets, ArrowRightLeft, DollarSign,
   Cpu, AlertCircle, CheckCircle2, LogOut, Download, 
   Plus, Trash2, Info, ToggleLeft, ToggleRight, CloudLightning,
-  Server, LayoutGrid, List, BrainCircuit, Clock, AlertTriangle
+  Server, LayoutGrid, List, BrainCircuit, Clock, AlertTriangle,
+  UserCog, MapPin, Phone, Edit2, Save, X
 } from 'lucide-react';
 
 // --- FIREBASE CONFIGURATION & INITIALIZATION ---
 import { initializeApp } from "firebase/app";
 import { getAnalytics } from "firebase/analytics";
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from "firebase/auth";
-import { getFirestore, doc, onSnapshot, setDoc, getDoc, collection, query, orderBy, limit, getDocs, deleteDoc } from "firebase/firestore";
+import { getFirestore, doc, onSnapshot, setDoc, getDoc, collection, query, orderBy, limit, getDocs, deleteDoc, updateDoc } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAYnzbwy3L1gEMwFNoGBMrGt-Ck74g_xDo",
@@ -162,8 +163,10 @@ const DataProvider = ({ children, user }) => {
       getDocs(collection(db, 'users')).then(snap => {
         const fetchedClients = snap.docs.map(d => ({ uid: d.id, ...d.data() })).filter(u => u.role !== 'admin');
         setClients(fetchedClients);
+        // Auto-select the first hardware client if available, else first client
         if (fetchedClients.length > 0 && activeClient.uid === user.uid) {
-          setActiveClient(fetchedClients[0]); // Auto-select first client for admin
+          const hwClient = fetchedClients.find(c => c.dataType === 'real');
+          setActiveClient(hwClient || fetchedClients[0]); 
         }
       });
     }
@@ -432,10 +435,10 @@ export default function App() {
           } else {
             // Failsafe for manually created users in console before DB sync
             const role = firebaseUser.email === 'admin@solarenerlytics.com' ? 'admin' : 'user';
-            setUser({ uid: firebaseUser.uid, email: firebaseUser.email, role, dataType: 'sim', name: firebaseUser.email.split('@')[0] });
+            setUser({ uid: firebaseUser.uid, email: firebaseUser.email, role, dataType: 'sim', name: firebaseUser.email.split('@')[0], mobile: 'N/A', location: 'N/A' });
           }
         } else {
-          setUser({ uid: firebaseUser.uid, email: firebaseUser.email, role: 'admin', dataType: 'sim', name: 'Admin' });
+          setUser({ uid: firebaseUser.uid, email: firebaseUser.email, role: 'admin', dataType: 'sim', name: 'Admin', mobile: 'N/A', location: 'N/A' });
         }
       } else {
         setUser(null);
@@ -477,7 +480,12 @@ const LoginPage = () => {
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState('admin@solarenerlytics.com');
   const [password, setPassword] = useState('Admin@1234');
+  
+  // New Profile Fields
   const [name, setName] = useState('');
+  const [mobile, setMobile] = useState('');
+  const [location, setLocation] = useState('');
+  
   const [dataType, setDataType] = useState('sim');
   const [espId, setEspId] = useState('');
   
@@ -488,7 +496,7 @@ const LoginPage = () => {
   const handleNameChange = (e) => {
     const val = e.target.value;
     setName(val);
-    if (val) {
+    if (val && isSignUp) {
       const suggested = val.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_');
       setEspId(`${suggested}_hardware`);
     } else {
@@ -508,7 +516,7 @@ const LoginPage = () => {
         // --- SIGN UP FLOW ---
         const userCred = await createUserWithEmailAndPassword(auth, email, password);
         await setDoc(doc(db, 'users', userCred.user.uid), {
-          name, email, role: 'user', dataType, espId: dataType === 'real' ? espId : ''
+          name, email, mobile, location, role: 'user', dataType, espId: dataType === 'real' ? espId : ''
         });
       } else {
         // --- LOGIN FLOW ---
@@ -519,7 +527,7 @@ const LoginPage = () => {
           if (email === 'admin@solarenerlytics.com' && password === 'Admin@1234' && (loginErr.code === 'auth/user-not-found' || loginErr.code === 'auth/invalid-credential')) {
             const userCred = await createUserWithEmailAndPassword(auth, email, password);
             await setDoc(doc(db, 'users', userCred.user.uid), {
-              name: 'Admin', email, role: 'admin', dataType: 'sim', espId: ''
+              name: 'System Admin', email, mobile: '0000000000', location: 'Headquarters', role: 'admin', dataType: 'sim', espId: ''
             });
           } else {
             throw loginErr;
@@ -556,11 +564,24 @@ const LoginPage = () => {
 
           <form onSubmit={handleAuth} className="space-y-4">
             {isSignUp && (
-              <div>
-                <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wide">Client Name</label>
-                <input type="text" required value={name} onChange={handleNameChange} placeholder="e.g. RVCE" className="w-full px-4 py-2.5 rounded-lg bg-slate-50 dark:bg-[#1A1A24] border border-slate-200 dark:border-[#2A2A35] text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500/50 outline-none text-sm font-medium" />
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wide">Client Name</label>
+                  <input type="text" required value={name} onChange={handleNameChange} placeholder="e.g. RVCE Campus" className="w-full px-4 py-2.5 rounded-lg bg-slate-50 dark:bg-[#1A1A24] border border-slate-200 dark:border-[#2A2A35] text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500/50 outline-none text-sm font-medium" />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wide">Mobile</label>
+                    <input type="tel" required value={mobile} onChange={e => setMobile(e.target.value)} placeholder="e.g. 9876543210" className="w-full px-4 py-2.5 rounded-lg bg-slate-50 dark:bg-[#1A1A24] border border-slate-200 dark:border-[#2A2A35] text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500/50 outline-none text-sm font-medium" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wide">Location</label>
+                    <input type="text" required value={location} onChange={e => setLocation(e.target.value)} placeholder="e.g. Bangalore" className="w-full px-4 py-2.5 rounded-lg bg-slate-50 dark:bg-[#1A1A24] border border-slate-200 dark:border-[#2A2A35] text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500/50 outline-none text-sm font-medium" />
+                  </div>
+                </div>
               </div>
             )}
+            
             <div>
               <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wide">Email Address</label>
               <input type="email" required value={email} onChange={e => setEmail(e.target.value)} className="w-full px-4 py-2.5 rounded-lg bg-slate-50 dark:bg-[#1A1A24] border border-slate-200 dark:border-[#2A2A35] text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500/50 outline-none text-sm font-medium" />
@@ -571,22 +592,22 @@ const LoginPage = () => {
             </div>
 
             {isSignUp && (
-              <>
+              <div className="pt-2 border-t border-slate-100 dark:border-[#2A2A35]">
                 <div>
-                  <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wide">Data Source</label>
+                  <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-2 mt-2 uppercase tracking-wide">Data Source</label>
                   <select value={dataType} onChange={e => setDataType(e.target.value)} className="w-full px-4 py-2.5 rounded-lg bg-slate-50 dark:bg-[#1A1A24] border border-slate-200 dark:border-[#2A2A35] text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500/50 outline-none text-sm font-medium cursor-pointer">
                     <option value="sim">Simulated Environment</option>
                     <option value="real">Real Edge Hardware (ESP32)</option>
                   </select>
                 </div>
                 {dataType === 'real' && (
-                  <div>
+                  <div className="mt-4">
                     <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wide">Hardware ID</label>
                     <input type="text" required value={espId} onChange={e => setEspId(e.target.value)} placeholder="e.g. rvce_hardware" className="w-full px-4 py-2.5 rounded-lg bg-slate-50 dark:bg-[#1A1A24] border border-slate-200 dark:border-[#2A2A35] text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500/50 outline-none text-sm font-medium" />
                     <p className="text-[10px] text-slate-500 mt-1">Must match the ESP32 Database Path ID.</p>
                   </div>
                 )}
-              </>
+              </div>
             )}
 
             <button type="submit" disabled={loading} className={`${modernButton} w-full bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 py-3 mt-4 disabled:opacity-70`}>
@@ -619,6 +640,7 @@ const MainLayout = () => {
     { id: 'billing', label: 'Statements', icon: DollarSign, roles: ['admin', 'user'] },
     { id: 'history', label: 'Data Logs', icon: List, roles: ['admin', 'user'] },
     { id: 'users', label: 'Directory', icon: Users, roles: ['admin'] },
+    { id: 'profile', label: 'My Profile', icon: UserCog, roles: ['admin', 'user'] },
   ];
 
   const filteredNav = NAV_ITEMS.filter(item => item.roles.includes(user.role));
@@ -636,6 +658,7 @@ const MainLayout = () => {
       case 'billing': return <BillingPage />;
       case 'history': return <HistoryPage />;
       case 'users': return <UsersPage />;
+      case 'profile': return <ProfilePage />;
       default: return <DashboardPage />;
     }
   };
@@ -694,6 +717,9 @@ const MainLayout = () => {
               </button>
               
               <div className="flex items-center gap-2 border-l border-slate-200 dark:border-[#2A2A35] pl-3 ml-1">
+                <button onClick={() => setCurrentPage('profile')} className="text-sm font-semibold text-slate-700 dark:text-slate-300 hover:text-emerald-500 transition-colors mr-2">
+                  {user.name}
+                </button>
                 <button onClick={handleLogout} className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-md transition-colors" title="Logout">
                   <LogOut className="w-4 h-4" />
                 </button>
@@ -711,7 +737,9 @@ const MainLayout = () => {
                 {filteredNav.find(n => n.id === currentPage)?.label || 'Overview'}
               </h1>
               <p className="text-sm text-slate-500 mt-1 font-medium">
-                {user.role === 'admin' ? `Viewing data profile for: ${activeClient?.name || 'Loading...'}` : 'Your personal system overview.'}
+                {currentPage === 'profile' 
+                  ? 'Manage your personal account settings.' 
+                  : user.role === 'admin' ? `Viewing data profile for: ${activeClient?.name || 'Loading...'}` : 'Your personal system overview.'}
               </p>
            </div>
         </div>
@@ -724,6 +752,127 @@ const MainLayout = () => {
 // ==========================================
 // 5. PAGES
 // ==========================================
+
+const ProfilePage = () => {
+  const { user, setUser } = useContext(AuthContext);
+  const { addToast } = useContext(ToastContext);
+  
+  const [isEditing, setIsEditing] = useState(false);
+  const [loading, setLoading] = useState(false);
+  
+  const [formData, setFormData] = useState({
+    name: user.name || '',
+    mobile: user.mobile || '',
+    location: user.location || ''
+  });
+
+  const handleChange = (e) => {
+    setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
+
+  const handleSave = async () => {
+    setLoading(true);
+    try {
+      if (db && user.uid) {
+        await updateDoc(doc(db, 'users', user.uid), formData);
+        setUser({ ...user, ...formData });
+        addToast("Profile updated successfully.", "success");
+        setIsEditing(false);
+      }
+    } catch (err) {
+      addToast("Failed to update profile.", "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCancel = () => {
+    setFormData({ name: user.name || '', mobile: user.mobile || '', location: user.location || '' });
+    setIsEditing(false);
+  };
+
+  return (
+    <div className="max-w-2xl">
+      <div className={`${modernCard} overflow-hidden`}>
+        <div className="p-6 border-b border-slate-200 dark:border-[#2A2A35] flex justify-between items-center bg-slate-50/50 dark:bg-[#1A1A24]/50">
+          <div className="flex items-center gap-3">
+            <div className="bg-emerald-100 dark:bg-emerald-900/30 p-2.5 rounded-full text-emerald-600 dark:text-emerald-400">
+              <UserCog className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white">Account Details</h2>
+              <p className="text-xs text-slate-500">Personal information and system configuration.</p>
+            </div>
+          </div>
+          {!isEditing ? (
+            <button onClick={() => setIsEditing(true)} className={`${modernButton} bg-slate-100 dark:bg-[#2A2A35] text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-[#3A3A45] text-xs py-1.5`}>
+              <Edit2 className="w-3.5 h-3.5" /> Edit Profile
+            </button>
+          ) : (
+            <div className="flex gap-2">
+              <button onClick={handleCancel} disabled={loading} className={`${modernButton} bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/40 text-xs py-1.5 disabled:opacity-50`}>
+                <X className="w-3.5 h-3.5" /> Cancel
+              </button>
+              <button onClick={handleSave} disabled={loading} className={`${modernButton} bg-emerald-500 hover:bg-emerald-600 text-white text-xs py-1.5 disabled:opacity-50`}>
+                <Save className="w-3.5 h-3.5" /> {loading ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          )}
+        </div>
+        
+        <div className="p-6 space-y-6">
+          {/* Read-only System Fields */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pb-6 border-b border-slate-100 dark:border-[#2A2A35]">
+            <div>
+              <div className="text-[10px] uppercase font-bold tracking-widest text-slate-400 mb-1">Email Address</div>
+              <div className="text-sm font-semibold text-slate-900 dark:text-slate-200">{user.email}</div>
+            </div>
+            <div>
+              <div className="text-[10px] uppercase font-bold tracking-widest text-slate-400 mb-1">Account Role</div>
+              <div className="text-sm font-semibold text-slate-900 dark:text-slate-200 uppercase">{user.role}</div>
+            </div>
+            {user.role !== 'admin' && (
+              <div>
+                <div className="text-[10px] uppercase font-bold tracking-widest text-slate-400 mb-1">Target ESP ID</div>
+                <div className="text-sm font-mono text-slate-600 dark:text-slate-400">{user.espId || 'Simulated'}</div>
+              </div>
+            )}
+          </div>
+
+          {/* Editable Fields */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-1">
+              <label className="text-[10px] uppercase font-bold tracking-widest text-slate-500 flex items-center gap-1.5"><Users className="w-3 h-3"/> Full Name</label>
+              {isEditing ? (
+                <input type="text" name="name" value={formData.name} onChange={handleChange} className="w-full px-3 py-2 rounded-md bg-white dark:bg-[#12121A] border border-slate-200 dark:border-[#3A3A45] text-slate-900 dark:text-white text-sm outline-none focus:border-emerald-500" />
+              ) : (
+                <div className="text-base font-semibold text-slate-900 dark:text-white py-1">{user.name}</div>
+              )}
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] uppercase font-bold tracking-widest text-slate-500 flex items-center gap-1.5"><Phone className="w-3 h-3"/> Mobile Number</label>
+              {isEditing ? (
+                <input type="tel" name="mobile" value={formData.mobile} onChange={handleChange} placeholder="e.g. +91 9876543210" className="w-full px-3 py-2 rounded-md bg-white dark:bg-[#12121A] border border-slate-200 dark:border-[#3A3A45] text-slate-900 dark:text-white text-sm outline-none focus:border-emerald-500" />
+              ) : (
+                <div className="text-base font-semibold text-slate-900 dark:text-white py-1">{user.mobile || 'Not Provided'}</div>
+              )}
+            </div>
+
+            <div className="space-y-1 md:col-span-2">
+              <label className="text-[10px] uppercase font-bold tracking-widest text-slate-500 flex items-center gap-1.5"><MapPin className="w-3 h-3"/> Installation Location</label>
+              {isEditing ? (
+                <input type="text" name="location" value={formData.location} onChange={handleChange} placeholder="e.g. RVCE Campus, Mysore Road" className="w-full px-3 py-2 rounded-md bg-white dark:bg-[#12121A] border border-slate-200 dark:border-[#3A3A45] text-slate-900 dark:text-white text-sm outline-none focus:border-emerald-500" />
+              ) : (
+                <div className="text-base font-semibold text-slate-900 dark:text-white py-1">{user.location || 'Not Provided'}</div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const DashboardPage = () => {
   const { liveData, history, activeClient } = useContext(DataContext);
@@ -1203,9 +1352,9 @@ const UsersPage = () => {
            <thead className="bg-slate-50 dark:bg-[#12121A] text-slate-500 text-xs uppercase tracking-wider font-bold border-b border-slate-200 dark:border-[#2A2A35]">
             <tr>
               <th className="px-5 py-3">Client Name</th>
-              <th className="px-5 py-3">Email Account</th>
+              <th className="px-5 py-3">Contact Info</th>
+              <th className="px-5 py-3">Location</th>
               <th className="px-5 py-3">Data Feed Type</th>
-              <th className="px-5 py-3">Edge ID (Target)</th>
               <th className="px-5 py-3 text-right">Admin</th>
             </tr>
           </thead>
@@ -1217,13 +1366,17 @@ const UsersPage = () => {
             ) : clients.map(c => (
               <tr key={c.uid} className="hover:bg-slate-50 dark:hover:bg-[#1A1A24] transition-colors">
                 <td className="px-5 py-3 font-semibold text-slate-900 dark:text-white">{c.name}</td>
-                <td className="px-5 py-3 text-slate-600 dark:text-slate-400">{c.email}</td>
+                <td className="px-5 py-3">
+                  <div className="text-slate-600 dark:text-slate-300">{c.email}</div>
+                  <div className="text-[10px] text-slate-400">{c.mobile || 'No Mobile'}</div>
+                </td>
+                <td className="px-5 py-3 text-slate-600 dark:text-slate-400">{c.location || 'N/A'}</td>
                 <td className="px-5 py-3">
                   <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-widest ${c.dataType === 'real' ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400' : 'bg-slate-100 dark:bg-[#2A2A35] text-slate-600 dark:text-slate-300'}`}>
                     {c.dataType === 'real' ? 'Hardware' : 'Simulated'}
                   </span>
+                  {c.dataType === 'real' && <div className="text-[10px] text-slate-400 mt-1 font-mono">{c.espId}</div>}
                 </td>
-                <td className="px-5 py-3 font-mono text-xs text-slate-600 dark:text-slate-400">{c.dataType === 'real' ? c.espId : 'N/A'}</td>
                 <td className="px-5 py-3 text-right">
                   <button onClick={() => { if(window.confirm('Delete this client profile from the database?')) api.deleteUser(c.uid); }} className="text-slate-400 hover:text-red-500 p-1.5 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors">
                     <Trash2 className="w-4 h-4" />
