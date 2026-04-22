@@ -260,10 +260,23 @@ const DataProvider = ({ children, user }) => {
             const updatedData = {
               ...prev,
               timestamp: espTime,
-              solar: data.solar || prev.solar,
-              battery: data.battery || prev.battery,
-              load: data.load || prev.load,
-              grid: data.grid || prev.grid,
+              solar: {
+                voltage: data.solar?.voltage ?? prev.solar.voltage,
+                current: data.solar?.current ?? prev.solar.current,
+                power: data.solar?.power ?? prev.solar.power
+              },
+              battery: {
+                percentage: data.battery?.percentage ?? prev.battery.percentage,
+                voltage: data.battery?.voltage ?? prev.battery.voltage,
+                temp: data.battery?.temp ?? prev.battery.temp
+              },
+              load: {
+                power: data.load?.power ?? prev.load.power
+              },
+              grid: {
+                voltage: data.grid?.voltage ?? prev.grid.voltage,
+                importExport: data.grid?.importExport ?? prev.grid.importExport
+              },
               relays: data.relays || prev.relays,
             };
             appendHistory(updatedData, espTime);
@@ -325,7 +338,7 @@ const DataProvider = ({ children, user }) => {
 const LiveStatusBadge = ({ timestamp }) => {
   const [isLive, setIsLive] = useState(true);
 
-  // Monitor freshness (15s threshold)
+  // Monitor freshness (15s threshold based on actual data timestamp)
   useEffect(() => {
     const checkLive = () => setIsLive(Date.now() - timestamp < 15000);
     checkLive();
@@ -333,18 +346,18 @@ const LiveStatusBadge = ({ timestamp }) => {
     return () => clearInterval(interval);
   }, [timestamp]);
 
+  const formattedDate = new Date(timestamp).toLocaleString('en-IN', {
+    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true
+  }).toUpperCase();
+
   if (isLive) {
     return (
-      <div className="flex items-center gap-1.5 px-2 py-1 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded text-[10px] font-bold border border-emerald-200 dark:border-emerald-500/20 transition-all shrink-0">
+      <div className="flex items-center gap-1.5 px-2 py-1 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded text-[10px] font-bold border border-emerald-200 dark:border-emerald-500/20 transition-all shrink-0" title={`Last data: ${formattedDate}`}>
         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
         LIVE
       </div>
     );
   }
-
-  const formattedDate = new Date(timestamp).toLocaleString('en-IN', {
-    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true
-  }).toUpperCase();
 
   return (
     <div className="flex items-center gap-1 px-2 py-1 bg-slate-100 dark:bg-[#1A1A24] text-slate-500 dark:text-slate-400 rounded text-[9px] font-bold border border-slate-200 dark:border-[#2A2A35] max-w-[110px] text-center leading-tight transition-all shrink-0">
@@ -362,6 +375,16 @@ export default function App() {
 
   const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
 
+  // Ensures dark mode works properly on the root <html> tag for Tailwind
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === 'dark') {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
+  }, [theme]);
+
   useEffect(() => {
     if (!auth) return setAuthLoading(false);
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
@@ -376,17 +399,13 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  useEffect(() => {
-    document.body.className = `${theme} bg-[#F8FAFC] dark:bg-[#09090E] text-slate-900 dark:text-slate-100 transition-colors duration-300 selection:bg-emerald-500/30`;
-  }, [theme]);
-
-  if (authLoading) return <div className="min-h-screen flex items-center justify-center text-slate-500 font-bold">Connecting Securely...</div>;
+  if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] dark:bg-[#09090E] text-slate-500 font-bold">Connecting Securely...</div>;
 
   return (
     <ThemeContext.Provider value={{ theme, toggleTheme }}>
       <ToastProvider>
         <AuthContext.Provider value={{ user, setUser }}>
-          <div className="min-h-screen font-sans flex flex-col relative">
+          <div className="min-h-screen font-sans flex flex-col relative bg-[#F8FAFC] dark:bg-[#09090E] text-slate-900 dark:text-slate-100 transition-colors duration-300">
             <style>{`
               .no-scrollbar::-webkit-scrollbar { display: none; }
               .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
@@ -957,7 +976,7 @@ const BillingPage = () => {
           <div className={`text-5xl font-black tracking-tight mb-2 ${netTotal > 0 ? 'text-orange-600 dark:text-orange-500' : 'text-emerald-600 dark:text-emerald-500'}`}>
             ₹{Math.abs(netTotal).toFixed(2)}
           </div>
-          <div className="text-sm font-bold text-slate-600 dark:text-slate-400">{netTotal > 0 ? 'Outstanding due to BESCOM Utility' : 'Surplus Credit in Account'}</div>
+          <div className="text-xs font-bold text-slate-600 dark:text-slate-400">{netTotal > 0 ? 'Outstanding due to BESCOM Utility' : 'Surplus Credit in Account'}</div>
         </div>
       </div>
       
@@ -979,8 +998,8 @@ const BillingPage = () => {
              <tbody className="text-sm">
                <tr className="border-b border-slate-100 dark:border-[#2A2A35]">
                  <td className="py-4 font-medium text-slate-900 dark:text-slate-100">Base Metering Fixed Charge</td>
-                 <td className="py-4 text-right text-slate-500">-</td>
-                 <td className="py-4 text-right text-slate-500">-</td>
+                 <td className="py-4 text-right text-slate-500 dark:text-slate-400">-</td>
+                 <td className="py-4 text-right text-slate-500 dark:text-slate-400">-</td>
                  <td className="py-4 text-right font-medium text-slate-900 dark:text-slate-100">₹150.00</td>
                </tr>
                <tr className="border-b border-slate-100 dark:border-[#2A2A35]">
