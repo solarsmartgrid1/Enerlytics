@@ -7,7 +7,7 @@ import {
   Shield, Droplets, ArrowRightLeft, DollarSign,
   Cpu, AlertCircle, CheckCircle2, LogOut, Download, 
   Plus, Trash2, Info, ToggleLeft, ToggleRight, CloudLightning,
-  Server, LayoutGrid, List
+  Server, LayoutGrid, List, BrainCircuit, Clock
 } from 'lucide-react';
 
 // --- FIREBASE CONFIGURATION & INITIALIZATION ---
@@ -26,7 +26,6 @@ const firebaseConfig = {
   measurementId: "G-6EMR6ZYPZH"
 };
 
-// Initialize Firebase
 let app, analytics, auth, db;
 try {
   app = initializeApp(firebaseConfig);
@@ -38,14 +37,12 @@ try {
 }
 
 // ==========================================
-// 1. CONSTANTS & STYLING UTILS
+// 1. CONSTANTS, UTILS & ML PREDICTOR
 // ==========================================
 const TARIFF = { BUY: 0.15, SELL: 0.05 };
-
 const modernCard = "bg-white dark:bg-[#12121A] border border-slate-200 dark:border-[#2A2A35] rounded-xl shadow-[0_2px_8px_-2px_rgba(0,0,0,0.05)] dark:shadow-[0_2px_8px_-2px_rgba(0,0,0,0.4)] transition-all duration-200 hover:shadow-md";
 const modernButton = "flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium transition-all active:scale-[0.98]";
 
-// Compacted Client Names for minimal Dropdown
 const MOCK_CLIENTS = [
   { id: 'rvce_hardware', name: 'RVCE', type: 'real' },
   { id: 'client_001', name: 'Alpha', type: 'sim' },
@@ -57,6 +54,57 @@ const mapWmoToState = (code) => {
   if (code >= 45 && code <= 48) return { id: 'CLOUDY', name: 'Overcast', icon: Cloud, color: 'text-slate-500' };
   if (code >= 51) return { id: 'RAINY', name: 'Precipitation', icon: CloudRain, color: 'text-blue-500' };
   return { id: 'SUNNY', name: 'Clear', icon: Sun, color: 'text-emerald-500' };
+};
+
+// --- MACHINE LEARNING & HYSTERESIS ENGINE ---
+const SolarMLPredictor = {
+  predictEfficiency: (cloudCover, rainProb, maxTemp) => {
+    let efficiency = 1.0; 
+    efficiency -= (cloudCover * 0.006);
+    efficiency -= (rainProb * 0.003);
+    if (maxTemp > 25) efficiency -= ((maxTemp - 25) * 0.004); 
+    return Math.max(0.1, Math.min(1.0, efficiency)); 
+  },
+
+  // Incorporates legacy hysteresis boundaries alongside ML efficiencies
+  decideAction: (efficiencyPct, batteryPct) => {
+    // 1. Critical Low (Battery < 40%) - Safety Hysteresis overrides ML
+    if (batteryPct < 40) {
+      return {
+        strategy: "Import Mode (Low SoC)",
+        batteryPolicy: "Priority Charging",
+        relays: { r1: true, r2: false, r3: true }, // Charge, Load off bat, Load from Grid
+        color: "text-rose-500"
+      };
+    }
+    
+    // 2. High Capacity (Battery >= 85%) - Blend with ML prediction
+    if (batteryPct >= 85) {
+      if (efficiencyPct > 50) {
+        return {
+          strategy: "Aggressive Export",
+          batteryPolicy: "Full / Discharging",
+          relays: { r1: false, r2: true, r3: false }, // Export PV to grid, Load from Bat
+          color: "text-emerald-500"
+        };
+      } else {
+        return {
+          strategy: "Weather Hoard Mode",
+          batteryPolicy: "Hold Charge (Low Sun)",
+          relays: { r1: true, r2: true, r3: false }, // Low sun incoming, keep charging battery
+          color: "text-amber-500"
+        };
+      }
+    }
+
+    // 3. Medium Capacity (40% - 84%) - Standard Cycle
+    return {
+      strategy: efficiencyPct > 70 ? "Balanced (High Yield)" : "Balanced Cycle",
+      batteryPolicy: "Standard Operation",
+      relays: { r1: true, r2: true, r3: false }, // Charge Bat, Load from Bat, Grid Off
+      color: "text-blue-500"
+    };
+  }
 };
 
 // ==========================================
@@ -109,14 +157,17 @@ const ToastProvider = ({ children }) => {
 
 const DataProvider = ({ children, user }) => {
   const [activeClientId, setActiveClientId] = useState(user?.role === 'admin' ? 'rvce_hardware' : user?.id);
+  const { addToast } = useContext(ToastContext);
   
   const [liveData, setLiveData] = useState({
+    timestamp: Date.now(),
     solar: { voltage: 14.2, current: 4.5, power: 63.9 },
     battery: { voltage: 12.8, percentage: 82, temp: 29 },
     load: { power: 45.0 },
     grid: { voltage: 230, importExport: -18.9 }, 
     relays: { mode: 'auto', r1: true, r2: true, r3: false },
     weather: { current: null, forecast: [], loading: true },
+    mlDecision: null,
     billing: { imported: 145.2, exported: 82.5, lastReset: '2026-04-01' }
   });
 
@@ -127,45 +178,69 @@ const DataProvider = ({ children, user }) => {
     { id: 3, name: 'Client Beta', role: 'user', deviceId: 'SIM-002', status: 'offline', lastActive: '2 hrs ago' }
   ]);
 
-  const { addToast } = useContext(ToastContext);
-
-  // Weather Logic
+  // 1. Fetch Weather Data once
   useEffect(() => {
     const fetchWeather = async () => {
       try {
-        const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=12.9716&longitude=77.5946&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=Asia%2FKolkata');
+        const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=12.9716&longitude=77.5946&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_max,cloudcover_mean&timezone=Asia%2FKolkata');
         const data = await res.json();
+        
         const forecast = data.daily.time.map((time, index) => {
           const wmoState = mapWmoToState(data.daily.weathercode[index]);
+          const cloudCover = data.daily.cloudcover_mean[index];
+          const rainProb = data.daily.precipitation_probability_max[index];
+          const maxTemp = data.daily.temperature_2m_max[index];
+          
+          const effRatio = SolarMLPredictor.predictEfficiency(cloudCover, rainProb, maxTemp);
           return {
             date: new Date(time).toLocaleDateString('en-IN', { weekday: 'short', month: 'short', day: 'numeric' }),
-            maxTemp: data.daily.temperature_2m_max[index],
-            minTemp: data.daily.temperature_2m_min[index],
-            rainProb: data.daily.precipitation_probability_max[index],
+            maxTemp, minTemp: data.daily.temperature_2m_min[index],
+            rainProb, cloudCover,
+            efficiencyPct: Math.round(effRatio * 100),
             ...wmoState
           };
         });
+
         setLiveData(prev => ({ ...prev, weather: { current: forecast[0], forecast, loading: false } }));
       } catch (err) {
-        addToast("Failed to fetch live weather. Using defaults.", "error");
+        addToast("Weather Engine failed. Using cached heuristics.", "error");
       }
     };
     fetchWeather();
   }, []);
 
-  // Sync with Firestore for RVCE hardware OR Simulate for demo clients
+  // 2. Real-Time Hysteresis & ML Processing Loop (Auto Mode)
+  useEffect(() => {
+    if (liveData.relays.mode === 'auto' && liveData.weather.current) {
+      const decision = SolarMLPredictor.decideAction(liveData.weather.current.efficiencyPct, liveData.battery.percentage);
+      
+      const r1Changed = liveData.relays.r1 !== decision.relays.r1;
+      const r2Changed = liveData.relays.r2 !== decision.relays.r2;
+      const r3Changed = liveData.relays.r3 !== decision.relays.r3;
+
+      if (r1Changed || r2Changed || r3Changed) {
+        api.updateMultipleRelays(decision.relays); // Push to hardware/state
+      }
+
+      if (liveData.mlDecision?.strategy !== decision.strategy) {
+        setLiveData(prev => ({ ...prev, mlDecision: decision }));
+      }
+    }
+  }, [liveData.battery.percentage, liveData.relays.mode, liveData.weather.current]);
+
+  // 3. Sync with Firestore for RVCE OR Simulate 
   useEffect(() => {
     let unsub = null;
     let interval = null;
 
     if (activeClientId === 'rvce_hardware' && db) {
-      // REAL-TIME FIRESTORE LISTENER FOR ESP32
       const docRef = doc(db, 'devices', 'rvce_hardware');
       unsub = onSnapshot(docRef, (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data();
           setLiveData(prev => ({
             ...prev,
+            timestamp: Date.now(), // Hardware ping registered
             solar: data.solar || prev.solar,
             battery: data.battery || prev.battery,
             load: data.load || prev.load,
@@ -173,21 +248,29 @@ const DataProvider = ({ children, user }) => {
             relays: data.relays || prev.relays,
           }));
         }
-      }, (err) => console.error("Firestore Listen Error:", err));
+      });
     } else {
-      // SIMULATED DATA FOR ALPHA/BETA
       interval = setInterval(() => {
         setLiveData(prev => {
+          // Dynamic battery to visibly demonstrate hysteresis over time
+          let newBat = prev.battery.percentage;
+          if (prev.relays.r1) newBat += 0.8; // Charging from Solar
+          if (prev.relays.r2) newBat -= 0.5; // Discharging to Load
+          newBat = Math.max(0, Math.min(100, newBat)); // Clamp
+          
           const newSolarP = Math.max(0, prev.solar.power + (Math.random() * 2 - 1));
           const newLoadP = Math.max(10, 20 + (Math.random() * 2 - 1));
+          
           return {
             ...prev,
+            timestamp: Date.now(), // Simulated ping
             solar: { ...prev.solar, power: Number(newSolarP.toFixed(1)) },
+            battery: { ...prev.battery, percentage: Number(newBat.toFixed(1)) },
             load: { ...prev.load, power: Number(newLoadP.toFixed(1)) },
             grid: { ...prev.grid, importExport: Number((newLoadP - newSolarP).toFixed(1)) }
           };
         });
-      }, 2000);
+      }, 3000);
     }
 
     return () => {
@@ -196,34 +279,67 @@ const DataProvider = ({ children, user }) => {
     };
   }, [activeClientId]);
 
-  // API to push Relay updates directly to Firebase
+  // API to push Relay updates with Hardware Interlocks
   const api = {
-    updateRelay: async (key, value) => {
+    updateRelayMode: (mode) => {
+      setLiveData(prev => ({ ...prev, relays: { ...prev.relays, mode } }));
       if (activeClientId === 'rvce_hardware' && db) {
-        // Optimistic UI Update
-        setLiveData(prev => ({ ...prev, relays: { ...prev.relays, [key]: value } }));
-        // Push to ESP32 Database
-        try {
-          const docRef = doc(db, 'devices', 'rvce_hardware');
-          await setDoc(docRef, { relays: { [key]: value } }, { merge: true });
-        } catch (e) {
-          addToast("Hardware Sync Failed.", "error");
-        }
-      } else {
-        setLiveData(prev => ({ ...prev, relays: { ...prev.relays, [key]: value } }));
+        setDoc(doc(db, 'devices', 'rvce_hardware'), { relays: { mode } }, { merge: true }).catch(()=>{});
       }
     },
-    resetBilling: () => setLiveData(prev => ({ ...prev, billing: { imported: 0, exported: 0, lastReset: new Date().toISOString() } })),
-    deleteUser: (id) => setUsers(prev => prev.filter(u => u.id !== id)),
-    addUser: (user) => setUsers(prev => [...prev, { ...user, id: Date.now(), status: 'offline', lastActive: 'Never' }])
+    updateMultipleRelays: async (newRelays) => {
+      setLiveData(prev => ({ ...prev, relays: { ...prev.relays, ...newRelays } }));
+      if (activeClientId === 'rvce_hardware' && db) {
+        try {
+          await setDoc(doc(db, 'devices', 'rvce_hardware'), { relays: newRelays }, { merge: true });
+        } catch (e) {
+           console.error("Hardware sync issue");
+        }
+      }
+    }
   };
 
   return <DataContext.Provider value={{ liveData, history, users, api, activeClientId, setActiveClientId, clients: MOCK_CLIENTS }}>{children}</DataContext.Provider>;
 };
 
 // ==========================================
-// 4. MAIN LAYOUT & NAVIGATION
+// 4. UI COMPONENTS & LAYOUT
 // ==========================================
+const LiveStatusBadge = ({ timestamp }) => {
+  const [isLive, setIsLive] = useState(true);
+
+  // Monitor freshness (10s threshold)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (Date.now() - timestamp > 10000) setIsLive(false);
+      else setIsLive(true);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [timestamp]);
+
+  if (isLive) {
+    return (
+      <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded text-[10px] font-bold border border-emerald-200 dark:border-emerald-500/20 transition-all">
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+        LIVE
+      </div>
+    );
+  }
+
+  const formattedDate = new Date(timestamp).toLocaleString('en-IN', {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true
+  }).toUpperCase();
+
+  return (
+    <div className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-100 dark:bg-[#1A1A24] text-slate-500 dark:text-slate-400 rounded text-[10px] font-bold border border-slate-200 dark:border-[#2A2A35] transition-all">
+      <Clock className="w-3 h-3 opacity-60" />
+      Last Updated: {formattedDate}
+    </div>
+  );
+};
+
+
 export default function App() {
   const [user, setUser] = useState(null); 
   const [theme, setTheme] = useState('light');
@@ -231,21 +347,15 @@ export default function App() {
 
   const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
 
-  // Firebase Auth Listener
   useEffect(() => {
-    if (!auth) {
-      setAuthLoading(false);
-      return;
-    }
+    if (!auth) return setAuthLoading(false);
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       if (firebaseUser) {
         const email = firebaseUser.email || '';
         if (email.includes('admin')) setUser({ id: 'admin_sys', name: 'Admin', role: 'admin' });
         else if (email.includes('rvce')) setUser({ id: 'rvce_hardware', name: 'RVCE', role: 'user' });
         else setUser({ id: 'client', name: 'Alpha Client', role: 'user' });
-      } else {
-        setUser(null);
-      }
+      } else setUser(null);
       setAuthLoading(false);
     });
     return () => unsubscribe();
@@ -255,7 +365,7 @@ export default function App() {
     document.body.className = `${theme} bg-[#F8FAFC] dark:bg-[#09090E] text-slate-900 dark:text-slate-100 transition-colors duration-300 selection:bg-emerald-500/30`;
   }, [theme]);
 
-  if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] dark:bg-[#09090E] text-slate-500">Connecting to System...</div>;
+  if (authLoading) return <div className="min-h-screen flex items-center justify-center text-slate-500 font-bold">Connecting Securely...</div>;
 
   return (
     <ThemeContext.Provider value={{ theme, toggleTheme }}>
@@ -295,11 +405,7 @@ const LoginPage = () => {
     setError('');
     setLoading(true);
 
-    const emailMap = {
-      'Admin': 'admin@solarenerlytics.com',
-      'RVCE': 'rvce@solarenerlytics.com',
-      'Client': 'client@solarenerlytics.com'
-    };
+    const emailMap = { 'Admin': 'admin@solarenerlytics.com', 'RVCE': 'rvce@solarenerlytics.com', 'Client': 'client@solarenerlytics.com' };
     const email = emailMap[username] || username;
 
     const fallbackLogin = () => {
@@ -309,27 +415,19 @@ const LoginPage = () => {
     };
 
     try {
-      if (auth) {
-        await signInWithEmailAndPassword(auth, email, password);
-      } else {
-        fallbackLogin();
-      }
+      if (auth) await signInWithEmailAndPassword(auth, email, password);
+      else fallbackLogin();
     } catch (err) {
       if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
         try {
           await createUserWithEmailAndPassword(auth, email, password);
         } catch (createErr) {
-          if (createErr.code === 'auth/configuration-not-found' || createErr.code === 'auth/operation-not-allowed') {
-            fallbackLogin(); 
-          } else {
-            setError(createErr.message.replace('Firebase:', '').trim());
-          }
+          if (createErr.code === 'auth/configuration-not-found' || createErr.code === 'auth/operation-not-allowed') fallbackLogin(); 
+          else setError(createErr.message.replace('Firebase:', '').trim());
         }
       } else if (err.code === 'auth/configuration-not-found' || err.code === 'auth/operation-not-allowed') {
          fallbackLogin(); 
-      } else {
-        setError(err.message.replace('Firebase:', '').trim());
-      }
+      } else setError(err.message.replace('Firebase:', '').trim());
     } finally {
       setLoading(false);
     }
@@ -345,7 +443,7 @@ const LoginPage = () => {
               <Zap className="w-6 h-6 text-white dark:text-slate-900" />
             </div>
           </div>
-          <h2 className="text-2xl font-bold text-center mb-1 tracking-tight text-slate-900 dark:text-white">Solar Enerlytics</h2>
+          <h2 className="text-2xl font-bold text-center mb-1 text-slate-900 dark:text-white">Solar Enerlytics</h2>
           <p className="text-center text-slate-500 text-sm mb-8">Secure Grid Management Portal</p>
           
           {error && <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-xs font-semibold rounded-lg border border-red-200 dark:border-red-800/50">{error}</div>}
@@ -353,17 +451,11 @@ const LoginPage = () => {
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
               <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wide">Username</label>
-              <input 
-                type="text" value={username} onChange={e => setUsername(e.target.value)}
-                className="w-full px-4 py-2.5 rounded-lg bg-slate-50 dark:bg-[#1A1A24] border border-slate-200 dark:border-[#2A2A35] text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all text-sm font-medium"
-              />
+              <input type="text" value={username} onChange={e => setUsername(e.target.value)} className="w-full px-4 py-2.5 rounded-lg bg-slate-50 dark:bg-[#1A1A24] border border-slate-200 dark:border-[#2A2A35] text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500/50 outline-none text-sm font-medium" />
             </div>
             <div>
               <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wide">Password</label>
-              <input 
-                type="password" value={password} onChange={e => setPassword(e.target.value)}
-                className="w-full px-4 py-2.5 rounded-lg bg-slate-50 dark:bg-[#1A1A24] border border-slate-200 dark:border-[#2A2A35] text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all text-sm font-medium"
-              />
+              <input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full px-4 py-2.5 rounded-lg bg-slate-50 dark:bg-[#1A1A24] border border-slate-200 dark:border-[#2A2A35] text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500/50 outline-none text-sm font-medium" />
             </div>
             <button type="submit" disabled={loading} className={`${modernButton} w-full bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 py-3 mt-4 disabled:opacity-70`}>
               {loading ? 'Authenticating...' : 'Authenticate & Enter'}
@@ -384,7 +476,7 @@ const MainLayout = () => {
   const { user, setUser } = useContext(AuthContext);
   const { theme, toggleTheme } = useContext(ThemeContext);
   const { addToast } = useContext(ToastContext);
-  const { activeClientId, setActiveClientId, clients } = useContext(DataContext);
+  const { liveData, activeClientId, setActiveClientId, clients } = useContext(DataContext);
 
   const NAV_ITEMS = [
     { id: 'dashboard', label: 'Overview', icon: LayoutGrid, roles: ['admin', 'user'] },
@@ -398,11 +490,7 @@ const MainLayout = () => {
   const filteredNav = NAV_ITEMS.filter(item => item.roles.includes(user.role));
 
   const handleLogout = async () => {
-    if (auth) {
-      try {
-        await signOut(auth);
-      } catch (e) {}
-    }
+    if (auth) try { await signOut(auth); } catch (e) {}
     setUser(null);
     addToast('Logged out securely', 'info');
   };
@@ -421,7 +509,6 @@ const MainLayout = () => {
 
   return (
     <>
-      {/* Full Width Header */}
       <header className="sticky top-0 z-50 w-full bg-white dark:bg-[#12121A] border-b border-slate-200 dark:border-[#2A2A35] shadow-sm">
         <div className="w-full px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between py-2 sm:py-0 sm:h-16 gap-2 sm:gap-0">
@@ -449,17 +536,8 @@ const MainLayout = () => {
                 {filteredNav.map(item => {
                   const isActive = currentPage === item.id;
                   return (
-                    <button
-                      key={item.id}
-                      onClick={() => setCurrentPage(item.id)}
-                      className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${
-                        isActive 
-                          ? 'bg-slate-100 dark:bg-[#1A1A24] text-slate-900 dark:text-white' 
-                          : 'text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-[#1A1A24]/50'
-                      }`}
-                    >
-                      <item.icon className={`w-4 h-4 ${isActive ? 'text-emerald-500' : 'opacity-60'}`} />
-                      {item.label}
+                    <button key={item.id} onClick={() => setCurrentPage(item.id)} className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${isActive ? 'bg-slate-100 dark:bg-[#1A1A24] text-slate-900 dark:text-white' : 'text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-[#1A1A24]/50'}`}>
+                      <item.icon className={`w-4 h-4 ${isActive ? 'text-emerald-500' : 'opacity-60'}`} /> {item.label}
                     </button>
                   )
                 })}
@@ -467,34 +545,24 @@ const MainLayout = () => {
             </nav>
 
             <div className="hidden sm:flex items-center gap-3 pl-6">
-              {/* COMPACT ADMIN CLIENT SELECTOR */}
               {user.role === 'admin' && (
                 <div className="flex items-center gap-2 bg-slate-50 dark:bg-[#1A1A24] border border-slate-200 dark:border-[#2A2A35] px-2.5 py-1.5 rounded-lg shadow-inner mr-2">
                   <Users className="w-3.5 h-3.5 text-emerald-500" />
-                  <select 
-                    value={activeClientId} 
-                    onChange={(e) => setActiveClientId(e.target.value)}
-                    className="bg-transparent text-sm font-bold outline-none cursor-pointer text-slate-700 dark:text-slate-300"
-                  >
+                  <select value={activeClientId} onChange={(e) => setActiveClientId(e.target.value)} className="bg-transparent text-sm font-bold outline-none cursor-pointer text-slate-700 dark:text-slate-300">
                     {clients.map(c => <option key={c.id} value={c.id} className="dark:bg-[#1A1A24]">{c.name}</option>)}
                   </select>
                 </div>
               )}
 
-              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded text-[10px] font-bold border border-emerald-200 dark:border-emerald-500/20">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                LIVE
-              </div>
+              {/* DYNAMIC LIVE BADGE */}
+              <LiveStatusBadge timestamp={liveData.timestamp} />
               
               <button onClick={toggleTheme} className="p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-[#1A1A24] rounded-md transition-colors">
                 {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
               </button>
               
-              {/* ULTRA MINIMAL LOGOUT AREA */}
               <div className="flex items-center gap-2 border-l border-slate-200 dark:border-[#2A2A35] pl-3 ml-1">
-                <div className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-                  {user.name}
-                </div>
+                <div className="text-sm font-semibold text-slate-700 dark:text-slate-300">{user.name}</div>
                 <button onClick={handleLogout} className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-md transition-colors" title="Logout">
                   <LogOut className="w-4 h-4" />
                 </button>
@@ -505,8 +573,7 @@ const MainLayout = () => {
         </div>
       </header>
 
-      {/* Full Width Main Area */}
-      <main className="flex-1 w-full p-4 sm:p-6 lg:p-8">
+      <main className="flex-1 w-full max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
         <div className="mb-6 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
            <div>
               <h1 className="text-2xl font-bold text-slate-900 dark:text-white capitalize">
@@ -586,33 +653,37 @@ const DashboardPage = () => {
         </div>
 
         <div className={`${modernCard} p-5 flex flex-col`}>
-           <h3 className="font-semibold text-sm uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-6">Active Strategy</h3>
+           <h3 className="font-semibold text-sm uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-6 flex items-center gap-2">
+             <BrainCircuit className="w-4 h-4 text-indigo-500" /> ML Active Strategy
+           </h3>
            
            <div className="flex-1 flex flex-col items-center justify-center">
-             {liveData.weather.current ? (
-               <div className="flex flex-col items-center">
-                 <div className="w-16 h-16 rounded-full bg-slate-50 dark:bg-[#1A1A24] border border-slate-200 dark:border-[#2A2A35] flex items-center justify-center mb-3">
-                    <liveData.weather.current.icon className={`w-8 h-8 ${liveData.weather.current.color}`} />
+             {liveData.weather.current && liveData.mlDecision ? (
+               <div className="flex flex-col items-center text-center">
+                 <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">Hysteresis AI Active</div>
+                 <div className="text-4xl font-black text-slate-900 dark:text-white mb-2">
+                   {liveData.mlDecision.strategy}
                  </div>
-                 <span className="font-bold text-lg text-slate-900 dark:text-white">{liveData.weather.current.name}</span>
-                 <span className="text-xs text-slate-500 mt-1">Sensed via Edge Analytics</span>
+                 <span className={`text-sm font-bold ${liveData.mlDecision.color} bg-slate-50 dark:bg-[#1A1A24] px-3 py-1 rounded-full border border-slate-100 dark:border-[#2A2A35]`}>
+                   {liveData.mlDecision.batteryPolicy}
+                 </span>
                </div>
              ) : (
-               <div className="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+               <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
              )}
            </div>
            
            <div className="grid grid-cols-2 gap-3 mt-6">
              <div className="bg-slate-50 dark:bg-[#1A1A24] p-3 rounded-lg border border-slate-100 dark:border-[#2A2A35]">
-               <div className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1">Battery Target</div>
-               <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                 {liveData.weather.current?.id === 'RAINY' ? 'Maximum Storage' : 'Standard Cycle'}
+               <div className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1">Battery Rule</div>
+               <div className="text-[11px] font-semibold text-slate-900 dark:text-slate-100">
+                 {liveData.mlDecision?.relays.r1 ? 'Charge Active' : 'Charge Bypass'}
                </div>
              </div>
              <div className="bg-slate-50 dark:bg-[#1A1A24] p-3 rounded-lg border border-slate-100 dark:border-[#2A2A35]">
                <div className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1">Grid Policy</div>
-               <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                 {liveData.weather.current?.id === 'SUNNY' ? 'Aggressive Export' : 'Minimal Exchange'}
+               <div className="text-[11px] font-semibold text-slate-900 dark:text-slate-100">
+                 {liveData.mlDecision?.relays.r3 ? 'Importing' : 'Isolated'}
                </div>
              </div>
            </div>
@@ -624,55 +695,65 @@ const DashboardPage = () => {
 
 const WeatherPage = () => {
   const { liveData } = useContext(DataContext);
-  const { addToast } = useContext(ToastContext);
-  const [syncing, setSyncing] = useState(false);
 
-  const handleSync = () => {
-    setSyncing(true);
-    setTimeout(() => {
-      setSyncing(false);
-      addToast("Strategy payload successfully transmitted to ESP32 node.", "success");
-    }, 1000);
-  };
-
-  if (liveData.weather.loading) return <div className="p-10 text-center text-sm font-medium text-slate-500 dark:text-slate-400 animate-pulse">Initializing Meteorological Models...</div>;
+  if (liveData.weather.loading) return <div className="p-10 text-center text-sm font-medium text-slate-500 dark:text-slate-400 animate-pulse">Initializing Meteorological Models & ML Engine...</div>;
 
   return (
     <div className="space-y-6">
       <div className={`${modernCard} p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-6`}>
          <div>
             <h2 className="text-lg font-bold mb-1 flex items-center gap-2 text-slate-900 dark:text-white">
-              Forecasting Engine
+              <BrainCircuit className="w-5 h-5 text-indigo-500" />
+              Machine Learning Forecasting Engine
             </h2>
-            <p className="text-slate-500 text-sm max-w-2xl">
-              7-Day predictive modeling using Open-Meteo API. The system formulates battery hoarding and grid export curves based on this dataset.
+            <p className="text-slate-500 text-sm max-w-3xl">
+              Uses Open-Meteo API for 7-Day predictive modeling. The embedded model pairs generation efficiency with battery hysteresis logic to seamlessly automate your solar relays.
             </p>
          </div>
-         <button 
-           onClick={handleSync}
-           disabled={syncing}
-           className={`${modernButton} bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-200 text-white dark:text-slate-900 disabled:opacity-70`}
-         >
-            {syncing ? <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"></div> : <Server className="w-4 h-4" />}
-            {syncing ? 'Pushing Data...' : 'Push to Hardware'}
-         </button>
+         {liveData.relays.mode === 'auto' ? (
+           <div className="flex items-center gap-2 px-4 py-2 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 rounded-lg border border-emerald-200 dark:border-emerald-800/50 text-sm font-bold shrink-0">
+             <CheckCircle2 className="w-4 h-4" /> AI Auto-Pilot Enabled
+           </div>
+         ) : (
+           <div className="flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-[#1A1A24] text-slate-500 dark:text-slate-400 rounded-lg border border-slate-200 dark:border-[#2A2A35] text-sm font-bold shrink-0">
+             <AlertCircle className="w-4 h-4" /> AI Auto-Pilot Disabled
+           </div>
+         )}
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
         {liveData.weather.forecast.map((day, idx) => (
-          <div key={idx} className={`${modernCard} p-4 flex flex-col items-center text-center ${idx === 0 ? 'ring-1 ring-emerald-500 bg-emerald-50/50 dark:bg-emerald-900/10' : ''}`}>
-            {idx === 0 && <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-600 dark:text-emerald-400 mb-2">Today</span>}
+          <div key={idx} className={`${modernCard} p-4 flex flex-col items-center text-center ${idx === 0 ? 'ring-2 ring-indigo-500 bg-indigo-50/30 dark:bg-indigo-900/10 border-indigo-200 dark:border-indigo-800' : ''}`}>
+            {idx === 0 && <span className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 dark:text-indigo-400 mb-2">Today</span>}
             <div className="text-xs font-bold text-slate-500 dark:text-slate-400 mb-3">{day.date}</div>
             <day.icon className={`w-8 h-8 mb-3 ${day.color}`} />
-            <div className="flex gap-2 text-sm font-bold mb-3">
+            
+            <div className="flex gap-2 text-sm font-bold mb-1">
                <span className="text-slate-900 dark:text-slate-100">{day.maxTemp}°</span>
                <span className="text-slate-400">{day.minTemp}°</span>
             </div>
-            <div className="w-full pt-3 border-t border-slate-100 dark:border-[#2A2A35] text-xs">
-              <span className="text-slate-500 dark:text-slate-400 flex items-center justify-center gap-1 font-medium"><Droplets className="w-3 h-3 text-blue-500"/> {day.rainProb}%</span>
+            <div className="flex items-center gap-2 text-[10px] font-medium text-slate-500 dark:text-slate-400 mb-3">
+              <span className="flex items-center gap-0.5"><Cloud className="w-3 h-3"/> {day.cloudCover}%</span>
+              <span className="flex items-center gap-0.5"><Droplets className="w-3 h-3 text-blue-500"/> {day.rainProb}%</span>
+            </div>
+
+            <div className="w-full pt-3 border-t border-slate-100 dark:border-[#2A2A35]">
+              <div className="text-[9px] uppercase tracking-wider text-slate-400 mb-1">Predicted Eff.</div>
+              <div className={`text-lg font-black ${day.efficiencyPct > 70 ? 'text-emerald-500' : day.efficiencyPct > 40 ? 'text-orange-500' : 'text-rose-500'}`}>{day.efficiencyPct}%</div>
             </div>
           </div>
         ))}
+      </div>
+      
+      <div className={`${modernCard} p-6`}>
+        <h3 className="font-bold text-sm text-slate-900 dark:text-white mb-4 border-b border-slate-100 dark:border-[#2A2A35] pb-2">Hysteresis & Interlock Logic Summary</h3>
+        <p className="text-sm text-slate-500 leading-relaxed">
+          The embedded application merges Machine Learning efficiency predictions with robust hardware safety interlocks.
+          <br/><br/>
+          <strong>1. Safety Interlock:</strong> Relay 2 (Battery Load) and Relay 3 (Grid Load) are mutually exclusive. It is physically impossible to activate both simultaneously via the software, protecting the inverters.
+          <br/>
+          <strong>2. Battery Hysteresis:</strong> If Battery SOC falls below 40%, the system overrides all AI efficiency algorithms and forces Relay 3 ON (Grid Import). If Battery SOC hits 85%, it analyzes the ML Weather Array to determine if it should begin aggressive surplus exports to the BESCOM grid.
+        </p>
       </div>
     </div>
   );
@@ -686,15 +767,26 @@ const RelayPage = () => {
   const toggleMode = () => {
     if(user.role !== 'admin') return addToast("Permission Denied: Read-Only for Clients", "error");
     const newMode = liveData.relays.mode === 'auto' ? 'manual' : 'auto';
-    api.updateRelay('mode', newMode);
+    api.updateRelayMode(newMode);
     addToast(`System control shifted to ${newMode.toUpperCase()}`, 'info');
   };
 
   const handleRelayToggle = (relay) => {
     if(user.role !== 'admin') return addToast("Permission Denied: Read-Only for Clients", "error");
     if (liveData.relays.mode === 'auto') return addToast('System is in AUTO mode. Manual overrides disabled.', 'error');
-    if (relay === 'r3' && !liveData.relays.r3 && liveData.relays.r2) return addToast('Hardware Interlock Active: Cannot tie grid while battery load is active.', 'error');
-    api.updateRelay(relay, !liveData.relays[relay]);
+    
+    const newRelays = { ...liveData.relays, [relay]: !liveData.relays[relay] };
+
+    // Strict Hardware Interlocks implemented from legacy code
+    if (relay === 'r2' && newRelays.r2) {
+        newRelays.r3 = false;
+        addToast('Interlock Engaged: Grid Load cut off to permit Battery Load.', 'info');
+    } else if (relay === 'r3' && newRelays.r3) {
+        newRelays.r2 = false;
+        addToast('Interlock Engaged: Battery Load cut off to permit Grid Load.', 'info');
+    }
+
+    api.updateMultipleRelays({ r1: newRelays.r1, r2: newRelays.r2, r3: newRelays.r3 });
   };
 
   return (
@@ -720,7 +812,7 @@ const RelayPage = () => {
           )}
 
           <div className="flex bg-slate-100 dark:bg-[#1A1A24] p-1 rounded-lg border border-slate-200 dark:border-[#2A2A35]">
-            <button onClick={toggleMode} className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${liveData.relays.mode === 'auto' ? 'bg-white dark:bg-[#2A2A35] text-emerald-600 dark:text-emerald-400 shadow-sm' : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'}`}>
+            <button onClick={toggleMode} className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${liveData.relays.mode === 'auto' ? 'bg-white dark:bg-[#2A2A35] text-indigo-600 dark:text-indigo-400 shadow-sm' : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'}`}>
               AUTO (AI)
             </button>
             <button onClick={toggleMode} className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${liveData.relays.mode === 'manual' ? 'bg-red-500 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'}`}>
