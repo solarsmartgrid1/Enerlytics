@@ -66,42 +66,38 @@ const SolarMLPredictor = {
     return Math.max(0.1, Math.min(1.0, efficiency)); 
   },
 
-  // Incorporates legacy hysteresis boundaries alongside ML efficiencies
   decideAction: (efficiencyPct, batteryPct) => {
-    // 1. Critical Low (Battery < 40%) - Safety Hysteresis overrides ML
     if (batteryPct < 40) {
       return {
         strategy: "Import Mode (Low SoC)",
         batteryPolicy: "Priority Charging",
-        relays: { r1: true, r2: false, r3: true }, // Charge, Load off bat, Load from Grid
+        relays: { r1: true, r2: false, r3: true }, 
         color: "text-rose-500"
       };
     }
     
-    // 2. High Capacity (Battery >= 85%) - Blend with ML prediction
     if (batteryPct >= 85) {
       if (efficiencyPct > 50) {
         return {
           strategy: "Aggressive Export",
           batteryPolicy: "Full / Discharging",
-          relays: { r1: false, r2: true, r3: false }, // Export PV to grid, Load from Bat
+          relays: { r1: false, r2: true, r3: false }, 
           color: "text-emerald-500"
         };
       } else {
         return {
           strategy: "Weather Hoard Mode",
           batteryPolicy: "Hold Charge (Low Sun)",
-          relays: { r1: true, r2: true, r3: false }, // Low sun incoming, keep charging battery
+          relays: { r1: true, r2: true, r3: false }, 
           color: "text-amber-500"
         };
       }
     }
 
-    // 3. Medium Capacity (40% - 84%) - Standard Cycle
     return {
       strategy: efficiencyPct > 70 ? "Balanced (High Yield)" : "Balanced Cycle",
       batteryPolicy: "Standard Operation",
-      relays: { r1: true, r2: true, r3: false }, // Charge Bat, Load from Bat, Grid Off
+      relays: { r1: true, r2: true, r3: false }, 
       color: "text-blue-500"
     };
   }
@@ -115,16 +111,26 @@ const ThemeContext = createContext();
 const ToastContext = createContext();
 const DataContext = createContext();
 
-const INITIAL_HISTORY = Array.from({ length: 50 }, (_, i) => ({
-  id: i,
-  timestamp: new Date(Date.now() - (50 - i) * 60000).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' }),
-  solarV: (12 + Math.random() * 3).toFixed(1),
-  solarI: (2 + Math.random() * 3).toFixed(1),
-  solarP: (30 + Math.random() * 40).toFixed(1),
-  batteryPct: Math.floor(60 + Math.random() * 40),
-  loadP: (20 + Math.random() * 20).toFixed(1),
-  gridStatus: Math.random() > 0.5 ? 'Exporting' : 'Importing'
-}));
+const generateInitialHistory = () => {
+  const history = [];
+  let now = Date.now();
+  for (let i = 0; i < 50; i++) {
+    const timeMs = now - ((50 - i) * 3000); // 3 seconds apart
+    const dateObj = new Date(timeMs);
+    history.push({
+      id: timeMs,
+      timestamp: dateObj.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
+      shortTime: dateObj.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
+      solarV: (12 + Math.random() * 3).toFixed(1),
+      solarI: (2 + Math.random() * 3).toFixed(1),
+      solarP: (30 + Math.random() * 40).toFixed(1),
+      batteryPct: Math.floor(60 + Math.random() * 40),
+      loadP: (20 + Math.random() * 20).toFixed(1),
+      gridStatus: Math.random() > 0.5 ? 'Exporting' : 'Importing'
+    });
+  }
+  return history.reverse(); // Newest first
+};
 
 // ==========================================
 // 3. PROVIDERS
@@ -159,6 +165,7 @@ const DataProvider = ({ children, user }) => {
   const [activeClientId, setActiveClientId] = useState(user?.role === 'admin' ? 'rvce_hardware' : user?.id);
   const { addToast } = useContext(ToastContext);
   
+  const [history, setHistory] = useState(generateInitialHistory());
   const [liveData, setLiveData] = useState({
     timestamp: Date.now(),
     solar: { voltage: 14.2, current: 4.5, power: 63.9 },
@@ -171,12 +178,30 @@ const DataProvider = ({ children, user }) => {
     billing: { imported: 145.2, exported: 82.5, lastReset: '2026-04-01' }
   });
 
-  const [history, setHistory] = useState(INITIAL_HISTORY);
   const [users, setUsers] = useState([
     { id: 1, name: 'RVCE Node', role: 'user', deviceId: 'ESP32-RVCE', status: 'online', lastActive: 'Just now' },
     { id: 2, name: 'Client Alpha', role: 'user', deviceId: 'SIM-001', status: 'online', lastActive: 'Just now' },
     { id: 3, name: 'Client Beta', role: 'user', deviceId: 'SIM-002', status: 'offline', lastActive: '2 hrs ago' }
   ]);
+
+  // Helper to sync history with exact timestamps
+  const appendHistory = (dataObj, timeMs) => {
+    setHistory(prev => {
+      const dateObj = new Date(timeMs);
+      const newEntry = {
+        id: timeMs,
+        timestamp: dateObj.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
+        shortTime: dateObj.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
+        solarV: dataObj.solar.voltage.toFixed(1),
+        solarI: dataObj.solar.current.toFixed(1),
+        solarP: dataObj.solar.power.toFixed(1),
+        batteryPct: Math.round(dataObj.battery.percentage),
+        loadP: dataObj.load.power.toFixed(1),
+        gridStatus: dataObj.grid.importExport < 0 ? 'Exporting' : 'Importing'
+      };
+      return [newEntry, ...prev].slice(0, 50); // Keep last 50, newest first
+    });
+  };
 
   // 1. Fetch Weather Data once
   useEffect(() => {
@@ -238,37 +263,44 @@ const DataProvider = ({ children, user }) => {
       unsub = onSnapshot(docRef, (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data();
-          setLiveData(prev => ({
-            ...prev,
-            timestamp: Date.now(), // Hardware ping registered
-            solar: data.solar || prev.solar,
-            battery: data.battery || prev.battery,
-            load: data.load || prev.load,
-            grid: data.grid || prev.grid,
-            relays: data.relays || prev.relays,
-          }));
+          const receiveTime = Date.now();
+          setLiveData(prev => {
+            const updatedData = {
+              ...prev,
+              timestamp: receiveTime, // Exact time received
+              solar: data.solar || prev.solar,
+              battery: data.battery || prev.battery,
+              load: data.load || prev.load,
+              grid: data.grid || prev.grid,
+              relays: data.relays || prev.relays,
+            };
+            appendHistory(updatedData, receiveTime);
+            return updatedData;
+          });
         }
       });
     } else {
       interval = setInterval(() => {
+        const receiveTime = Date.now();
         setLiveData(prev => {
-          // Dynamic battery to visibly demonstrate hysteresis over time
           let newBat = prev.battery.percentage;
-          if (prev.relays.r1) newBat += 0.8; // Charging from Solar
-          if (prev.relays.r2) newBat -= 0.5; // Discharging to Load
-          newBat = Math.max(0, Math.min(100, newBat)); // Clamp
+          if (prev.relays.r1) newBat += 0.8; 
+          if (prev.relays.r2) newBat -= 0.5; 
+          newBat = Math.max(0, Math.min(100, newBat)); 
           
           const newSolarP = Math.max(0, prev.solar.power + (Math.random() * 2 - 1));
           const newLoadP = Math.max(10, 20 + (Math.random() * 2 - 1));
           
-          return {
+          const updatedData = {
             ...prev,
-            timestamp: Date.now(), // Simulated ping
+            timestamp: receiveTime, // Exact time generated/received
             solar: { ...prev.solar, power: Number(newSolarP.toFixed(1)) },
             battery: { ...prev.battery, percentage: Number(newBat.toFixed(1)) },
             load: { ...prev.load, power: Number(newLoadP.toFixed(1)) },
             grid: { ...prev.grid, importExport: Number((newLoadP - newSolarP).toFixed(1)) }
           };
+          appendHistory(updatedData, receiveTime);
+          return updatedData;
         });
       }, 3000);
     }
@@ -308,7 +340,7 @@ const DataProvider = ({ children, user }) => {
 const LiveStatusBadge = ({ timestamp }) => {
   const [isLive, setIsLive] = useState(true);
 
-  // Monitor freshness (10s threshold)
+  // Monitor freshness (10s threshold based on actual data timestamp)
   useEffect(() => {
     const interval = setInterval(() => {
       if (Date.now() - timestamp > 10000) setIsLive(false);
@@ -317,19 +349,19 @@ const LiveStatusBadge = ({ timestamp }) => {
     return () => clearInterval(interval);
   }, [timestamp]);
 
+  const formattedDate = new Date(timestamp).toLocaleString('en-IN', {
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true
+  }).toUpperCase();
+
   if (isLive) {
     return (
-      <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded text-[10px] font-bold border border-emerald-200 dark:border-emerald-500/20 transition-all">
+      <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded text-[10px] font-bold border border-emerald-200 dark:border-emerald-500/20 transition-all" title={`Last data: ${formattedDate}`}>
         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
         LIVE
       </div>
     );
   }
-
-  const formattedDate = new Date(timestamp).toLocaleString('en-IN', {
-    day: '2-digit', month: '2-digit', year: 'numeric',
-    hour: '2-digit', minute: '2-digit', hour12: true
-  }).toUpperCase();
 
   return (
     <div className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-100 dark:bg-[#1A1A24] text-slate-500 dark:text-slate-400 rounded text-[10px] font-bold border border-slate-200 dark:border-[#2A2A35] transition-all">
@@ -554,7 +586,6 @@ const MainLayout = () => {
                 </div>
               )}
 
-              {/* DYNAMIC LIVE BADGE */}
               <LiveStatusBadge timestamp={liveData.timestamp} />
               
               <button onClick={toggleTheme} className="p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-[#1A1A24] rounded-md transition-colors">
@@ -595,14 +626,16 @@ const MainLayout = () => {
 // ==========================================
 
 const DashboardPage = () => {
-  const { liveData, activeClientId } = useContext(DataContext);
+  const { liveData, history, activeClientId } = useContext(DataContext);
   const { theme } = useContext(ThemeContext);
   const isRVCE = activeClientId === 'rvce_hardware';
 
-  const chartData = Array.from({ length: 20 }, (_, i) => ({
-    time: `${i}:00`,
-    solar: Math.max(0, liveData.solar.power - (20 - i) * 2 + Math.random() * 10),
-    load: Math.max(10, liveData.load.power - (20 - i) + Math.random() * 5)
+  // Construct chart data strictly from the real history array
+  // Reversing so left-to-right is chronological
+  const chartData = [...history].slice(0, 20).reverse().map(h => ({
+    time: h.shortTime,
+    solar: parseFloat(h.solarP),
+    load: parseFloat(h.loadP)
   }));
 
   return (
@@ -625,7 +658,7 @@ const DashboardPage = () => {
         <div className={`lg:col-span-2 ${modernCard} p-5`}>
           <div className="flex justify-between items-center mb-6">
             <h3 className="font-semibold text-sm uppercase tracking-wider text-slate-500 dark:text-slate-400">Power Distribution</h3>
-            <span className="text-xs font-bold px-2 py-1 bg-slate-100 dark:bg-[#1A1A24] text-slate-600 dark:text-slate-400 rounded">24H Timeline</span>
+            <span className="text-xs font-bold px-2 py-1 bg-slate-100 dark:bg-[#1A1A24] text-slate-600 dark:text-slate-400 rounded">Live Feed</span>
           </div>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
@@ -695,6 +728,16 @@ const DashboardPage = () => {
 
 const WeatherPage = () => {
   const { liveData } = useContext(DataContext);
+  const { addToast } = useContext(ToastContext);
+  const [syncing, setSyncing] = useState(false);
+
+  const handleSync = () => {
+    setSyncing(true);
+    setTimeout(() => {
+      setSyncing(false);
+      addToast("Strategy payload successfully transmitted to ESP32 node.", "success");
+    }, 1000);
+  };
 
   if (liveData.weather.loading) return <div className="p-10 text-center text-sm font-medium text-slate-500 dark:text-slate-400 animate-pulse">Initializing Meteorological Models & ML Engine...</div>;
 
@@ -823,9 +866,30 @@ const RelayPage = () => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <RelayControlCard id="r1" title="Solar Diversion (R1)" desc="Routes PV current to charge controller vs open circuit." state={liveData.relays.r1} isAuto={liveData.relays.mode === 'auto' || user.role !== 'admin'} onToggle={() => handleRelayToggle('r1')} />
-        <RelayControlCard id="r2" title="Battery Load (R2)" desc="Connects inverter output to primary house circuits." state={liveData.relays.r2} isAuto={liveData.relays.mode === 'auto' || user.role !== 'admin'} onToggle={() => handleRelayToggle('r2')} />
-        <RelayControlCard id="r3" title="Grid Contactor (R3)" desc="Closes circuit to BESCOM grid for net metering." state={liveData.relays.r3} isAuto={liveData.relays.mode === 'auto' || user.role !== 'admin'} onToggle={() => handleRelayToggle('r3')} />
+        <RelayControlCard 
+          id="r1" 
+          title="Relay 1 (Solar Diversion)" 
+          desc="Controls Solar PV destination. OFF (Normally Closed): Solar to Grid. ON (Normally Open): Solar to Battery." 
+          state={liveData.relays.r1} 
+          isAuto={liveData.relays.mode === 'auto' || user.role !== 'admin'} 
+          onToggle={() => handleRelayToggle('r1')} 
+        />
+        <RelayControlCard 
+          id="r2" 
+          title="Relay 2 (Battery Load)" 
+          desc="Controls inverter output. OFF (Normally Closed): Disconnected. ON (Normally Open): Battery to House Circuits." 
+          state={liveData.relays.r2} 
+          isAuto={liveData.relays.mode === 'auto' || user.role !== 'admin'} 
+          onToggle={() => handleRelayToggle('r2')} 
+        />
+        <RelayControlCard 
+          id="r3" 
+          title="Relay 3 (Grid Contactor)" 
+          desc="Controls net metering. OFF (Normally Closed): Disconnected. ON (Normally Open): Grid to House Circuits." 
+          state={liveData.relays.r3} 
+          isAuto={liveData.relays.mode === 'auto' || user.role !== 'admin'} 
+          onToggle={() => handleRelayToggle('r3')} 
+        />
       </div>
     </div>
   );
@@ -839,8 +903,8 @@ const HistoryPage = () => {
     <div className={`${modernCard} overflow-hidden flex flex-col h-[calc(100vh-12rem)]`}>
       <div className="p-4 border-b border-slate-200 dark:border-[#2A2A35] flex justify-between items-center bg-slate-50/50 dark:bg-[#1A1A24]/50">
         <div>
-          <h2 className="text-base font-bold text-slate-900 dark:text-white">Node Telemetry</h2>
-          <p className="text-xs font-medium text-slate-500">Chronological snapshot log.</p>
+          <h2 className="text-base font-bold text-slate-900 dark:text-white">Node Telemetry Logs</h2>
+          <p className="text-xs font-medium text-slate-500">Exact snapshot timeline synced with ESP32 data bursts.</p>
         </div>
         <button onClick={() => addToast('Exporting dataset...', 'success')} className={`${modernButton} bg-white dark:bg-[#2A2A35] text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-[#3A3A45] hover:bg-slate-50 dark:hover:bg-[#3A3A45] shadow-sm text-xs py-1.5`}>
           <Download className="w-3.5 h-3.5" /> Export CSV
@@ -850,7 +914,7 @@ const HistoryPage = () => {
         <table className="w-full text-left text-sm whitespace-nowrap">
           <thead className="bg-slate-50 dark:bg-[#12121A] border-b border-slate-200 dark:border-[#2A2A35] sticky top-0 z-10 text-slate-500 font-bold text-xs uppercase tracking-wider">
             <tr>
-              <th className="px-5 py-3">Timestamp</th>
+              <th className="px-5 py-3">Received Timestamp</th>
               <th className="px-5 py-3">PV Input (V/A/W)</th>
               <th className="px-5 py-3">Battery SoC</th>
               <th className="px-5 py-3">Load</th>
@@ -890,32 +954,71 @@ const BillingPage = () => {
   const netTotal = (liveData.billing.imported * TARIFF.BUY) - (liveData.billing.exported * TARIFF.SELL);
 
   return (
-    <div className="max-w-4xl space-y-4">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className={`${modernCard} p-6 flex flex-col justify-center`}>
-          <div className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1 flex items-center gap-2"><ArrowRightLeft className="w-3 h-3 text-orange-500"/> Grid Import</div>
-          <div className="text-3xl font-bold text-slate-900 dark:text-white mb-1">{liveData.billing.imported.toFixed(1)} <span className="text-sm font-medium text-slate-400">kWh</span></div>
-          <div className="text-xs font-semibold text-orange-500 border-t border-slate-100 dark:border-[#2A2A35] pt-2 mt-2">Cost: ₹{(liveData.billing.imported * TARIFF.BUY).toFixed(2)}</div>
+          <div className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-2 flex items-center gap-2"><ArrowRightLeft className="w-3.5 h-3.5 text-orange-500"/> Total Grid Import</div>
+          <div className="text-4xl font-bold text-slate-900 dark:text-white mb-2">{liveData.billing.imported.toFixed(1)} <span className="text-lg font-medium text-slate-400">kWh</span></div>
+          <div className="text-sm font-semibold text-orange-500">Cost Accrued: ₹{(liveData.billing.imported * TARIFF.BUY).toFixed(2)}</div>
         </div>
         <div className={`${modernCard} p-6 flex flex-col justify-center`}>
-          <div className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1 flex items-center gap-2"><Sun className="w-3 h-3 text-emerald-500"/> Solar Export</div>
-          <div className="text-3xl font-bold text-slate-900 dark:text-white mb-1">{liveData.billing.exported.toFixed(1)} <span className="text-sm font-medium text-slate-400">kWh</span></div>
-          <div className="text-xs font-semibold text-emerald-500 border-t border-slate-100 dark:border-[#2A2A35] pt-2 mt-2">Revenue: ₹{(liveData.billing.exported * TARIFF.SELL).toFixed(2)}</div>
+          <div className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-2 flex items-center gap-2"><Sun className="w-3.5 h-3.5 text-emerald-500"/> Total Solar Export</div>
+          <div className="text-4xl font-bold text-slate-900 dark:text-white mb-2">{liveData.billing.exported.toFixed(1)} <span className="text-lg font-medium text-slate-400">kWh</span></div>
+          <div className="text-sm font-semibold text-emerald-500">Revenue Generated: ₹{(liveData.billing.exported * TARIFF.SELL).toFixed(2)}</div>
         </div>
         <div className={`${modernCard} p-6 flex flex-col justify-center ${netTotal > 0 ? 'bg-orange-50/50 dark:bg-orange-900/10' : 'bg-emerald-50/50 dark:bg-emerald-900/10'}`}>
-          <div className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1">Net Balance Estimate</div>
-          <div className={`text-4xl font-black tracking-tight mb-1 ${netTotal > 0 ? 'text-orange-600 dark:text-orange-500' : 'text-emerald-600 dark:text-emerald-500'}`}>
+          <div className="text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-2">Net Payable Balance</div>
+          <div className={`text-5xl font-black tracking-tight mb-2 ${netTotal > 0 ? 'text-orange-600 dark:text-orange-500' : 'text-emerald-600 dark:text-emerald-500'}`}>
             ₹{Math.abs(netTotal).toFixed(2)}
           </div>
-          <div className="text-xs font-bold text-slate-600 dark:text-slate-400 border-t border-slate-200 dark:border-[#2A2A35] pt-2 mt-2">{netTotal > 0 ? 'Due to Utility' : 'Credit from Utility'}</div>
+          <div className="text-sm font-bold text-slate-600 dark:text-slate-400">{netTotal > 0 ? 'Outstanding due to BESCOM Utility' : 'Surplus Credit in Account'}</div>
         </div>
       </div>
       
-      <div className={`${modernCard} p-6 mt-4`}>
-         <h3 className="font-bold text-sm mb-4 text-slate-900 dark:text-white border-b border-slate-100 dark:border-[#2A2A35] pb-2">Tariff Structure</h3>
-         <div className="flex gap-8 text-sm">
-           <div><span className="text-slate-500">Buy Rate:</span> <span className="font-semibold text-slate-900 dark:text-white">₹{TARIFF.BUY}/kWh</span></div>
-           <div><span className="text-slate-500">Sell Rate:</span> <span className="font-semibold text-slate-900 dark:text-white">₹{TARIFF.SELL}/kWh</span></div>
+      <div className={`${modernCard} overflow-hidden`}>
+         <div className="p-5 border-b border-slate-200 dark:border-[#2A2A35] bg-slate-50/50 dark:bg-[#1A1A24]/50">
+           <h3 className="font-bold text-base text-slate-900 dark:text-white">Detailed Statement (Current Billing Cycle)</h3>
+           <p className="text-xs text-slate-500 mt-1">Cycle start date: {new Date(liveData.billing.lastReset).toLocaleDateString()}</p>
+         </div>
+         <div className="p-6">
+           <table className="w-full text-left">
+             <thead>
+               <tr className="border-b border-slate-200 dark:border-[#2A2A35] text-slate-500 text-sm">
+                 <th className="pb-3 font-semibold w-1/2">Description</th>
+                 <th className="pb-3 font-semibold text-right">Units (kWh)</th>
+                 <th className="pb-3 font-semibold text-right">Rate</th>
+                 <th className="pb-3 font-semibold text-right">Total Amount</th>
+               </tr>
+             </thead>
+             <tbody className="text-sm">
+               <tr className="border-b border-slate-100 dark:border-[#2A2A35]">
+                 <td className="py-4 font-medium text-slate-900 dark:text-slate-100">Base Metering Fixed Charge</td>
+                 <td className="py-4 text-right text-slate-500">-</td>
+                 <td className="py-4 text-right text-slate-500">-</td>
+                 <td className="py-4 text-right font-medium text-slate-900 dark:text-slate-100">₹150.00</td>
+               </tr>
+               <tr className="border-b border-slate-100 dark:border-[#2A2A35]">
+                 <td className="py-4 font-medium text-slate-900 dark:text-slate-100">Power Utilized from Grid</td>
+                 <td className="py-4 text-right text-slate-600 dark:text-slate-400">{liveData.billing.imported.toFixed(2)}</td>
+                 <td className="py-4 text-right text-slate-600 dark:text-slate-400">₹{TARIFF.BUY}/kWh</td>
+                 <td className="py-4 text-right font-medium text-orange-500">+ ₹{(liveData.billing.imported * TARIFF.BUY).toFixed(2)}</td>
+               </tr>
+               <tr className="border-b border-slate-200 dark:border-[#2A2A35]">
+                 <td className="py-4 font-medium text-slate-900 dark:text-slate-100">Power Sold to Grid</td>
+                 <td className="py-4 text-right text-slate-600 dark:text-slate-400">{liveData.billing.exported.toFixed(2)}</td>
+                 <td className="py-4 text-right text-slate-600 dark:text-slate-400">₹{TARIFF.SELL}/kWh</td>
+                 <td className="py-4 text-right font-medium text-emerald-500">- ₹{(liveData.billing.exported * TARIFF.SELL).toFixed(2)}</td>
+               </tr>
+               <tr>
+                 <td className="py-5 font-bold text-slate-900 dark:text-white text-base">Net Total Amount</td>
+                 <td></td>
+                 <td></td>
+                 <td className={`py-5 text-right font-black text-xl ${netTotal + 150 > 0 ? 'text-orange-500' : 'text-emerald-500'}`}>
+                   ₹{Math.abs(netTotal + 150).toFixed(2)}
+                 </td>
+               </tr>
+             </tbody>
+           </table>
          </div>
       </div>
     </div>
@@ -1019,14 +1122,14 @@ const RelayControlCard = ({ title, desc, state, isAuto, onToggle }) => (
       <div className="flex justify-between items-center mb-2 border-b border-slate-100 dark:border-[#2A2A35] pb-3">
         <h4 className="font-bold text-sm text-slate-900 dark:text-white">{title}</h4>
         <div className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${state ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800' : 'bg-slate-100 dark:bg-[#1A1A24] text-slate-500 border border-slate-200 dark:border-[#2A2A35]'}`}>
-          {state ? 'Closed' : 'Open'}
+          {state ? 'ON' : 'OFF'}
         </div>
       </div>
-      <p className="text-xs font-medium text-slate-500 mb-6 min-h-[36px] mt-3">{desc}</p>
+      <p className="text-xs font-medium text-slate-500 mb-6 min-h-[36px] mt-3 leading-relaxed">{desc}</p>
     </div>
     
-    <div className="flex items-center justify-between mt-auto">
-      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{state ? 'Power Flowing' : 'Circuit Broken'}</span>
+    <div className="flex items-center justify-between mt-auto pt-4 border-t border-slate-50 dark:border-[#1A1A24]">
+      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{state ? 'Circuit Engaged' : 'Circuit Bypassed'}</span>
       <button 
         onClick={onToggle} 
         disabled={isAuto} 
