@@ -7,7 +7,7 @@ import {
   Shield, Droplets, ArrowRightLeft, DollarSign,
   Cpu, AlertCircle, CheckCircle2, LogOut, Download, 
   Plus, Trash2, Info, ToggleLeft, ToggleRight, CloudLightning,
-  Server, LayoutGrid, List, BrainCircuit, Clock
+  Server, LayoutGrid, List, BrainCircuit, Clock, AlertTriangle
 } from 'lucide-react';
 
 // --- FIREBASE CONFIGURATION & INITIALIZATION ---
@@ -68,38 +68,13 @@ const SolarMLPredictor = {
 
   decideAction: (efficiencyPct, batteryPct) => {
     if (batteryPct < 40) {
-      return {
-        strategy: "Import Mode (Low SoC)",
-        batteryPolicy: "Priority Charging",
-        relays: { r1: true, r2: false, r3: true }, 
-        color: "text-rose-500"
-      };
+      return { strategy: "Import Mode (Low SoC)", batteryPolicy: "Priority Charging", relays: { r1: true, r2: false, r3: true }, color: "text-rose-500" };
     }
-    
     if (batteryPct >= 85) {
-      if (efficiencyPct > 50) {
-        return {
-          strategy: "Aggressive Export",
-          batteryPolicy: "Full / Discharging",
-          relays: { r1: false, r2: true, r3: false }, 
-          color: "text-emerald-500"
-        };
-      } else {
-        return {
-          strategy: "Weather Hoard Mode",
-          batteryPolicy: "Hold Charge (Low Sun)",
-          relays: { r1: true, r2: true, r3: false }, 
-          color: "text-amber-500"
-        };
-      }
+      if (efficiencyPct > 50) return { strategy: "Aggressive Export", batteryPolicy: "Full / Discharging", relays: { r1: false, r2: true, r3: false }, color: "text-emerald-500" };
+      else return { strategy: "Weather Hoard Mode", batteryPolicy: "Hold Charge (Low Sun)", relays: { r1: true, r2: true, r3: false }, color: "text-amber-500" };
     }
-
-    return {
-      strategy: efficiencyPct > 70 ? "Balanced (High Yield)" : "Balanced Cycle",
-      batteryPolicy: "Standard Operation",
-      relays: { r1: true, r2: true, r3: false }, 
-      color: "text-blue-500"
-    };
+    return { strategy: efficiencyPct > 70 ? "Balanced (High Yield)" : "Balanced Cycle", batteryPolicy: "Standard Operation", relays: { r1: true, r2: true, r3: false }, color: "text-blue-500" };
   }
 };
 
@@ -115,7 +90,7 @@ const generateInitialHistory = () => {
   const history = [];
   let now = Date.now();
   for (let i = 0; i < 50; i++) {
-    const timeMs = now - ((50 - i) * 3000); // 3 seconds apart
+    const timeMs = now - ((50 - i) * 3000); 
     const dateObj = new Date(timeMs);
     history.push({
       id: timeMs,
@@ -129,7 +104,7 @@ const generateInitialHistory = () => {
       gridStatus: Math.random() > 0.5 ? 'Exporting' : 'Importing'
     });
   }
-  return history.reverse(); // Newest first
+  return history.reverse(); 
 };
 
 // ==========================================
@@ -165,7 +140,7 @@ const DataProvider = ({ children, user }) => {
   const [activeClientId, setActiveClientId] = useState(user?.role === 'admin' ? 'rvce_hardware' : user?.id);
   const { addToast } = useContext(ToastContext);
   
-  const [history, setHistory] = useState(generateInitialHistory());
+  const [history, setHistory] = useState([]);
   const [liveData, setLiveData] = useState({
     timestamp: Date.now(),
     solar: { voltage: 14.2, current: 4.5, power: 63.9 },
@@ -179,12 +154,20 @@ const DataProvider = ({ children, user }) => {
   });
 
   const [users, setUsers] = useState([
-    { id: 1, name: 'RVCE Node', role: 'user', deviceId: 'ESP32-RVCE', status: 'online', lastActive: 'Just now' },
-    { id: 2, name: 'Client Alpha', role: 'user', deviceId: 'SIM-001', status: 'online', lastActive: 'Just now' },
-    { id: 3, name: 'Client Beta', role: 'user', deviceId: 'SIM-002', status: 'offline', lastActive: '2 hrs ago' }
+    { id: 1, name: 'RVCE Node', role: 'user', deviceId: 'ESP32-RVCE' },
+    { id: 2, name: 'Client Alpha', role: 'user', deviceId: 'SIM-001' },
+    { id: 3, name: 'Client Beta', role: 'user', deviceId: 'SIM-002' }
   ]);
 
-  // Helper to sync history with exact timestamps
+  // Clear history when switching to REAL hardware so we don't mix fake data
+  useEffect(() => {
+    if (activeClientId === 'rvce_hardware') {
+      setHistory([]); 
+    } else {
+      setHistory(generateInitialHistory());
+    }
+  }, [activeClientId]);
+
   const appendHistory = (dataObj, timeMs) => {
     setHistory(prev => {
       const dateObj = new Date(timeMs);
@@ -199,11 +182,11 @@ const DataProvider = ({ children, user }) => {
         loadP: dataObj.load.power.toFixed(1),
         gridStatus: dataObj.grid.importExport < 0 ? 'Exporting' : 'Importing'
       };
-      return [newEntry, ...prev].slice(0, 50); // Keep last 50, newest first
+      return [newEntry, ...prev].slice(0, 50); 
     });
   };
 
-  // 1. Fetch Weather Data once
+  // Weather Logic
   useEffect(() => {
     const fetchWeather = async () => {
       try {
@@ -212,48 +195,52 @@ const DataProvider = ({ children, user }) => {
         
         const forecast = data.daily.time.map((time, index) => {
           const wmoState = mapWmoToState(data.daily.weathercode[index]);
-          const cloudCover = data.daily.cloudcover_mean[index];
-          const rainProb = data.daily.precipitation_probability_max[index];
-          const maxTemp = data.daily.temperature_2m_max[index];
-          
-          const effRatio = SolarMLPredictor.predictEfficiency(cloudCover, rainProb, maxTemp);
+          const effRatio = SolarMLPredictor.predictEfficiency(data.daily.cloudcover_mean[index], data.daily.precipitation_probability_max[index], data.daily.temperature_2m_max[index]);
           return {
             date: new Date(time).toLocaleDateString('en-IN', { weekday: 'short', month: 'short', day: 'numeric' }),
-            maxTemp, minTemp: data.daily.temperature_2m_min[index],
-            rainProb, cloudCover,
+            maxTemp: data.daily.temperature_2m_max[index], minTemp: data.daily.temperature_2m_min[index],
+            rainProb: data.daily.precipitation_probability_max[index], cloudCover: data.daily.cloudcover_mean[index],
             efficiencyPct: Math.round(effRatio * 100),
             ...wmoState
           };
         });
-
         setLiveData(prev => ({ ...prev, weather: { current: forecast[0], forecast, loading: false } }));
       } catch (err) {
-        addToast("Weather Engine failed. Using cached heuristics.", "error");
+        addToast("Weather Engine failed. Using defaults.", "error");
       }
     };
     fetchWeather();
   }, []);
 
-  // 2. Real-Time Hysteresis & ML Processing Loop (Auto Mode)
+  // ML Processing Loop
   useEffect(() => {
-    if (liveData.relays.mode === 'auto' && liveData.weather.current) {
+    if (liveData.weather.current) {
       const decision = SolarMLPredictor.decideAction(liveData.weather.current.efficiencyPct, liveData.battery.percentage);
-      
-      const r1Changed = liveData.relays.r1 !== decision.relays.r1;
-      const r2Changed = liveData.relays.r2 !== decision.relays.r2;
-      const r3Changed = liveData.relays.r3 !== decision.relays.r3;
-
-      if (r1Changed || r2Changed || r3Changed) {
-        api.updateMultipleRelays(decision.relays); // Push to hardware/state
-      }
-
-      if (liveData.mlDecision?.strategy !== decision.strategy) {
-        setLiveData(prev => ({ ...prev, mlDecision: decision }));
-      }
+      setLiveData(prev => {
+        let shouldUpdate = false;
+        const updates = {};
+        if (prev.mlDecision?.strategy !== decision.strategy || prev.mlDecision?.batteryPolicy !== decision.batteryPolicy) {
+          updates.mlDecision = decision;
+          shouldUpdate = true;
+        }
+        if (prev.relays.mode === 'auto') {
+          const r1Changed = prev.relays.r1 !== decision.relays.r1;
+          const r2Changed = prev.relays.r2 !== decision.relays.r2;
+          const r3Changed = prev.relays.r3 !== decision.relays.r3;
+          if (r1Changed || r2Changed || r3Changed) {
+            updates.relays = { ...prev.relays, ...decision.relays };
+            shouldUpdate = true;
+            if (activeClientId === 'rvce_hardware' && db) {
+              setDoc(doc(db, 'devices', 'rvce_hardware'), { relays: updates.relays }, { merge: true }).catch(()=>{});
+            }
+          }
+        }
+        return shouldUpdate ? { ...prev, ...updates } : prev;
+      });
     }
-  }, [liveData.battery.percentage, liveData.relays.mode, liveData.weather.current]);
+  }, [liveData.battery.percentage, liveData.relays.mode, liveData.weather.current, activeClientId]);
 
-  // 3. Sync with Firestore for RVCE OR Simulate 
+  // Sync with Firestore
   useEffect(() => {
     let unsub = null;
     let interval = null;
@@ -263,43 +250,47 @@ const DataProvider = ({ children, user }) => {
       unsub = onSnapshot(docRef, (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data();
-          const receiveTime = Date.now();
+          // Use the exact timestamp pushed by the ESP32 (fallback to Date.now if missing)
+          const espTime = data.timestamp ? parseInt(data.timestamp) * 1000 : Date.now();
+          
           setLiveData(prev => {
+            // Prevent duplicate history entries for the exact same hardware timestamp
+            if (prev.timestamp === espTime) return prev;
+
             const updatedData = {
               ...prev,
-              timestamp: receiveTime, // Exact time received
+              timestamp: espTime,
               solar: data.solar || prev.solar,
               battery: data.battery || prev.battery,
               load: data.load || prev.load,
               grid: data.grid || prev.grid,
               relays: data.relays || prev.relays,
             };
-            appendHistory(updatedData, receiveTime);
+            appendHistory(updatedData, espTime);
             return updatedData;
           });
         }
       });
     } else {
       interval = setInterval(() => {
-        const receiveTime = Date.now();
+        const simTime = Date.now();
         setLiveData(prev => {
           let newBat = prev.battery.percentage;
           if (prev.relays.r1) newBat += 0.8; 
           if (prev.relays.r2) newBat -= 0.5; 
           newBat = Math.max(0, Math.min(100, newBat)); 
-          
           const newSolarP = Math.max(0, prev.solar.power + (Math.random() * 2 - 1));
           const newLoadP = Math.max(10, 20 + (Math.random() * 2 - 1));
           
           const updatedData = {
             ...prev,
-            timestamp: receiveTime, // Exact time generated/received
+            timestamp: simTime,
             solar: { ...prev.solar, power: Number(newSolarP.toFixed(1)) },
             battery: { ...prev.battery, percentage: Number(newBat.toFixed(1)) },
             load: { ...prev.load, power: Number(newLoadP.toFixed(1)) },
             grid: { ...prev.grid, importExport: Number((newLoadP - newSolarP).toFixed(1)) }
           };
-          appendHistory(updatedData, receiveTime);
+          appendHistory(updatedData, simTime);
           return updatedData;
         });
       }, 3000);
@@ -311,22 +302,16 @@ const DataProvider = ({ children, user }) => {
     };
   }, [activeClientId]);
 
-  // API to push Relay updates with Hardware Interlocks
   const api = {
     updateRelayMode: (mode) => {
       setLiveData(prev => ({ ...prev, relays: { ...prev.relays, mode } }));
-      if (activeClientId === 'rvce_hardware' && db) {
-        setDoc(doc(db, 'devices', 'rvce_hardware'), { relays: { mode } }, { merge: true }).catch(()=>{});
-      }
+      if (activeClientId === 'rvce_hardware' && db) setDoc(doc(db, 'devices', 'rvce_hardware'), { relays: { mode } }, { merge: true }).catch(()=>{});
     },
     updateMultipleRelays: async (newRelays) => {
       setLiveData(prev => ({ ...prev, relays: { ...prev.relays, ...newRelays } }));
       if (activeClientId === 'rvce_hardware' && db) {
-        try {
-          await setDoc(doc(db, 'devices', 'rvce_hardware'), { relays: newRelays }, { merge: true });
-        } catch (e) {
-           console.error("Hardware sync issue");
-        }
+        try { await setDoc(doc(db, 'devices', 'rvce_hardware'), { relays: newRelays }, { merge: true }); } 
+        catch (e) { console.error("Hardware sync issue"); }
       }
     }
   };
@@ -340,33 +325,31 @@ const DataProvider = ({ children, user }) => {
 const LiveStatusBadge = ({ timestamp }) => {
   const [isLive, setIsLive] = useState(true);
 
-  // Monitor freshness (10s threshold based on actual data timestamp)
+  // Monitor freshness (15s threshold)
   useEffect(() => {
-    const interval = setInterval(() => {
-      if (Date.now() - timestamp > 10000) setIsLive(false);
-      else setIsLive(true);
-    }, 1000);
+    const checkLive = () => setIsLive(Date.now() - timestamp < 15000);
+    checkLive();
+    const interval = setInterval(checkLive, 2000);
     return () => clearInterval(interval);
   }, [timestamp]);
 
-  const formattedDate = new Date(timestamp).toLocaleString('en-IN', {
-    day: '2-digit', month: 'short', year: 'numeric',
-    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true
-  }).toUpperCase();
-
   if (isLive) {
     return (
-      <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded text-[10px] font-bold border border-emerald-200 dark:border-emerald-500/20 transition-all" title={`Last data: ${formattedDate}`}>
+      <div className="flex items-center gap-1.5 px-2 py-1 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded text-[10px] font-bold border border-emerald-200 dark:border-emerald-500/20 transition-all shrink-0">
         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
         LIVE
       </div>
     );
   }
 
+  const formattedDate = new Date(timestamp).toLocaleString('en-IN', {
+    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true
+  }).toUpperCase();
+
   return (
-    <div className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-100 dark:bg-[#1A1A24] text-slate-500 dark:text-slate-400 rounded text-[10px] font-bold border border-slate-200 dark:border-[#2A2A35] transition-all">
-      <Clock className="w-3 h-3 opacity-60" />
-      Last Updated: {formattedDate}
+    <div className="flex items-center gap-1 px-2 py-1 bg-slate-100 dark:bg-[#1A1A24] text-slate-500 dark:text-slate-400 rounded text-[9px] font-bold border border-slate-200 dark:border-[#2A2A35] max-w-[110px] text-center leading-tight transition-all shrink-0">
+      <Clock className="w-3 h-3 shrink-0" />
+      <span>Last: {formattedDate}</span>
     </div>
   );
 };
@@ -493,10 +476,6 @@ const LoginPage = () => {
               {loading ? 'Authenticating...' : 'Authenticate & Enter'}
             </button>
           </form>
-
-          <div className="mt-8 pt-6 border-t border-slate-100 dark:border-[#2A2A35] text-center flex items-center justify-center gap-1.5 text-emerald-600 dark:text-emerald-500">
-            <Shield className="w-4 h-4" /> <span className="text-xs font-bold">Firebase Protected</span>
-          </div>
         </div>
       </div>
     </div>
@@ -630,9 +609,8 @@ const DashboardPage = () => {
   const { theme } = useContext(ThemeContext);
   const isRVCE = activeClientId === 'rvce_hardware';
 
-  // Construct chart data strictly from the real history array
-  // Reversing so left-to-right is chronological
-  const chartData = [...history].slice(0, 20).reverse().map(h => ({
+  // Construct chart data directly from dynamic history logs
+  const chartData = [...history].reverse().map(h => ({
     time: h.shortTime,
     solar: parseFloat(h.solarP),
     load: parseFloat(h.loadP)
@@ -661,27 +639,31 @@ const DashboardPage = () => {
             <span className="text-xs font-bold px-2 py-1 bg-slate-100 dark:bg-[#1A1A24] text-slate-600 dark:text-slate-400 rounded">Live Feed</span>
           </div>
           <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="colorSolar" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.2}/>
-                    <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                  </linearGradient>
-                  <linearGradient id="colorLoad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#64748b" stopOpacity={0.2}/>
-                    <stop offset="95%" stopColor="#64748b" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke={theme === 'dark' ? '#2A2A35' : '#e2e8f0'} vertical={false} />
-                <XAxis dataKey="time" stroke={theme === 'dark' ? '#64748b' : '#94a3b8'} fontSize={11} tickLine={false} axisLine={false} />
-                <YAxis stroke={theme === 'dark' ? '#64748b' : '#94a3b8'} fontSize={11} tickLine={false} axisLine={false} />
-                <RechartsTooltip contentStyle={{ backgroundColor: theme === 'dark' ? '#1A1A24' : '#ffffff', borderRadius: '8px', border: theme === 'dark' ? '1px solid #2A2A35' : '1px solid #e2e8f0', fontSize: '12px', color: theme === 'dark' ? '#fff' : '#000' }} />
-                <Legend iconType="circle" wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
-                <Area type="monotone" dataKey="solar" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#colorSolar)" name="Solar Gen (W)" />
-                <Area type="monotone" dataKey="load" stroke="#64748b" strokeWidth={2} fillOpacity={1} fill="url(#colorLoad)" name="Consumption (W)" />
-              </AreaChart>
-            </ResponsiveContainer>
+            {chartData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={chartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="colorSolar" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.2}/>
+                      <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                    </linearGradient>
+                    <linearGradient id="colorLoad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#64748b" stopOpacity={0.2}/>
+                      <stop offset="95%" stopColor="#64748b" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke={theme === 'dark' ? '#2A2A35' : '#e2e8f0'} vertical={false} />
+                  <XAxis dataKey="time" stroke={theme === 'dark' ? '#64748b' : '#94a3b8'} fontSize={11} tickLine={false} axisLine={false} />
+                  <YAxis stroke={theme === 'dark' ? '#64748b' : '#94a3b8'} fontSize={11} tickLine={false} axisLine={false} />
+                  <RechartsTooltip contentStyle={{ backgroundColor: theme === 'dark' ? '#1A1A24' : '#ffffff', borderRadius: '8px', border: theme === 'dark' ? '1px solid #2A2A35' : '1px solid #e2e8f0', fontSize: '12px', color: theme === 'dark' ? '#fff' : '#000' }} />
+                  <Legend iconType="circle" wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
+                  <Area type="monotone" dataKey="solar" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#colorSolar)" name="Solar Gen (W)" />
+                  <Area type="monotone" dataKey="load" stroke="#64748b" strokeWidth={2} fillOpacity={1} fill="url(#colorLoad)" name="Consumption (W)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+               <div className="flex items-center justify-center h-full text-slate-400 text-sm">Waiting for hardware telemetry...</div>
+            )}
           </div>
         </div>
 
@@ -790,13 +772,16 @@ const WeatherPage = () => {
       
       <div className={`${modernCard} p-6`}>
         <h3 className="font-bold text-sm text-slate-900 dark:text-white mb-4 border-b border-slate-100 dark:border-[#2A2A35] pb-2">Hysteresis & Interlock Logic Summary</h3>
-        <p className="text-sm text-slate-500 leading-relaxed">
-          The embedded application merges Machine Learning efficiency predictions with robust hardware safety interlocks.
-          <br/><br/>
-          <strong>1. Safety Interlock:</strong> Relay 2 (Battery Load) and Relay 3 (Grid Load) are mutually exclusive. It is physically impossible to activate both simultaneously via the software, protecting the inverters.
-          <br/>
-          <strong>2. Battery Hysteresis:</strong> If Battery SOC falls below 40%, the system overrides all AI efficiency algorithms and forces Relay 3 ON (Grid Import). If Battery SOC hits 85%, it analyzes the ML Weather Array to determine if it should begin aggressive surplus exports to the BESCOM grid.
-        </p>
+        <div className="text-sm text-slate-500 leading-relaxed space-y-4">
+          <p>
+            <strong>1. Hardware Safety Interlock:</strong> Relay 2 (Battery Load) and Relay 3 (Grid Load) are mutually exclusive. It is physically impossible to activate both simultaneously via software, preventing cross-conduction and protecting the inverters.
+          </p>
+          <p>
+            <strong>2. Battery Hysteresis Rule:</strong> 
+            <br/> • If SOC drops below <strong>40%</strong>, the system overrides all AI efficiency algorithms. It forces Relay 3 ON (Grid Import) and Relay 2 OFF (Disables Battery Load) to protect battery health.
+            <br/> • If SOC hits <strong>85%</strong>, it analyzes the ML Weather array to determine if it should begin aggressive surplus exports to the BESCOM grid or hold the charge due to impending cloud cover.
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -822,10 +807,10 @@ const RelayPage = () => {
 
     // Strict Hardware Interlocks implemented from legacy code
     if (relay === 'r2' && newRelays.r2) {
-        newRelays.r3 = false;
+        newRelays.r3 = false; // Turn off Grid Load if Battery Load turns ON
         addToast('Interlock Engaged: Grid Load cut off to permit Battery Load.', 'info');
     } else if (relay === 'r3' && newRelays.r3) {
-        newRelays.r2 = false;
+        newRelays.r2 = false; // Turn off Battery Load if Grid Load turns ON
         addToast('Interlock Engaged: Battery Load cut off to permit Grid Load.', 'info');
     }
 
@@ -869,23 +854,24 @@ const RelayPage = () => {
         <RelayControlCard 
           id="r1" 
           title="Relay 1 (Solar Diversion)" 
-          desc="Controls Solar PV destination. OFF (Normally Closed): Solar to Grid. ON (Normally Open): Solar to Battery." 
+          desc="Controls Solar PV destination. OFF (Normally Closed): Solar directed to Grid. ON (Normally Open): Solar directed to Battery." 
           state={liveData.relays.r1} 
           isAuto={liveData.relays.mode === 'auto' || user.role !== 'admin'} 
           onToggle={() => handleRelayToggle('r1')} 
+          warning
         />
         <RelayControlCard 
           id="r2" 
           title="Relay 2 (Battery Load)" 
-          desc="Controls inverter output. OFF (Normally Closed): Disconnected. ON (Normally Open): Battery to House Circuits." 
+          desc="Controls inverter output. OFF (Normally Closed): House disconnected from battery. ON (Normally Open): House powered by Battery." 
           state={liveData.relays.r2} 
           isAuto={liveData.relays.mode === 'auto' || user.role !== 'admin'} 
           onToggle={() => handleRelayToggle('r2')} 
         />
         <RelayControlCard 
           id="r3" 
-          title="Relay 3 (Grid Contactor)" 
-          desc="Controls net metering. OFF (Normally Closed): Disconnected. ON (Normally Open): Grid to House Circuits." 
+          title="Relay 3 (Grid Load)" 
+          desc="Controls Grid Power flow to house. OFF (Normally Closed): Disconnected. ON (Normally Open): House powered directly by Grid." 
           state={liveData.relays.r3} 
           isAuto={liveData.relays.mode === 'auto' || user.role !== 'admin'} 
           onToggle={() => handleRelayToggle('r3')} 
@@ -1026,7 +1012,7 @@ const BillingPage = () => {
 };
 
 const UsersPage = () => {
-  const { users, api } = useContext(DataContext);
+  const { users, api, liveData } = useContext(DataContext);
   const { addToast } = useContext(ToastContext);
 
   const handleAdd = () => {
@@ -1037,6 +1023,19 @@ const UsersPage = () => {
       addToast('Customer provisioned successfully', 'success');
     }
   };
+
+  const isRVCELive = (Date.now() - liveData.timestamp) < 15000;
+
+  const directoryUsers = users.map(u => {
+    if (u.id === 1) { 
+      return { 
+        ...u, 
+        status: isRVCELive ? 'online' : 'offline', 
+        lastActive: isRVCELive ? 'Live' : new Date(liveData.timestamp).toLocaleString('en-IN', {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'})
+      };
+    }
+    return u;
+  });
 
   return (
     <div className={`${modernCard} overflow-hidden`}>
@@ -1061,16 +1060,17 @@ const UsersPage = () => {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-[#1A1A24]">
-            {users.map(u => (
+            {directoryUsers.map(u => (
               <tr key={u.id} className="hover:bg-slate-50 dark:hover:bg-[#1A1A24] transition-colors">
                 <td className="px-5 py-3 font-semibold text-slate-900 dark:text-white">{u.name}</td>
                 <td className="px-5 py-3"><span className="px-2 py-0.5 bg-slate-100 dark:bg-[#2A2A35] text-slate-600 dark:text-slate-300 rounded text-[10px] uppercase font-bold tracking-widest">{u.role}</span></td>
                 <td className="px-5 py-3 font-mono text-xs text-slate-600 dark:text-slate-400">{u.deviceId}</td>
                 <td className="px-5 py-3">
-                  <div className="flex items-center gap-1.5">
-                    <span className={`w-1.5 h-1.5 rounded-full ${u.status === 'online' ? 'bg-emerald-500' : 'bg-slate-400'}`}></span>
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    <span className={`w-1.5 h-1.5 rounded-full ${u.status === 'online' ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`}></span>
                     <span className="text-xs font-bold capitalize text-slate-600 dark:text-slate-400">{u.status}</span>
                   </div>
+                  {u.status === 'offline' && <div className="text-[10px] text-slate-400 ml-3">{u.lastActive}</div>}
                 </td>
                 <td className="px-5 py-3 text-right">
                   {u.role !== 'admin' && (
@@ -1116,11 +1116,14 @@ const KpiCard = ({ title, value, sub, icon, color }) => {
   );
 };
 
-const RelayControlCard = ({ title, desc, state, isAuto, onToggle }) => (
+const RelayControlCard = ({ title, desc, state, isAuto, onToggle, warning }) => (
   <div className={`${modernCard} p-5 flex flex-col justify-between ${state ? 'ring-1 ring-emerald-500/50' : ''}`}>
     <div>
       <div className="flex justify-between items-center mb-2 border-b border-slate-100 dark:border-[#2A2A35] pb-3">
-        <h4 className="font-bold text-sm text-slate-900 dark:text-white">{title}</h4>
+        <h4 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-2">
+          {title} 
+          {warning && <AlertTriangle className="w-3.5 h-3.5 text-amber-500" title="Safety interlocks apply" />}
+        </h4>
         <div className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${state ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800' : 'bg-slate-100 dark:bg-[#1A1A24] text-slate-500 border border-slate-200 dark:border-[#2A2A35]'}`}>
           {state ? 'ON' : 'OFF'}
         </div>
@@ -1129,7 +1132,7 @@ const RelayControlCard = ({ title, desc, state, isAuto, onToggle }) => (
     </div>
     
     <div className="flex items-center justify-between mt-auto pt-4 border-t border-slate-50 dark:border-[#1A1A24]">
-      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{state ? 'Circuit Engaged' : 'Circuit Bypassed'}</span>
+      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{state ? 'Circuit Engaged (NO)' : 'Circuit Bypassed (NC)'}</span>
       <button 
         onClick={onToggle} 
         disabled={isAuto} 
