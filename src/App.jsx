@@ -44,12 +44,6 @@ const TARIFF = { BUY: 0.15, SELL: 0.05 };
 const modernCard = "bg-white dark:bg-[#12121A] border border-slate-200 dark:border-[#2A2A35] rounded-xl shadow-[0_2px_8px_-2px_rgba(0,0,0,0.05)] dark:shadow-[0_2px_8px_-2px_rgba(0,0,0,0.4)] transition-all duration-200 hover:shadow-md";
 const modernButton = "flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium transition-all active:scale-[0.98]";
 
-const MOCK_CLIENTS = [
-  { id: 'rvce_hardware', name: 'RVCE', type: 'real' },
-  { id: 'client_001', name: 'Alpha', type: 'sim' },
-  { id: 'client_002', name: 'Beta', type: 'sim' }
-];
-
 const mapWmoToState = (code) => {
   if (code <= 3) return { id: 'SUNNY', name: 'Clear Sky', icon: Sun, color: 'text-emerald-500' };
   if (code >= 45 && code <= 48) return { id: 'CLOUDY', name: 'Overcast', icon: Cloud, color: 'text-slate-500' };
@@ -86,27 +80,6 @@ const AuthContext = createContext();
 const ThemeContext = createContext();
 const ToastContext = createContext();
 const DataContext = createContext();
-
-const generateInitialHistory = () => {
-  const history = [];
-  let now = Date.now();
-  for (let i = 0; i < 50; i++) {
-    const timeMs = now - ((50 - i) * 3000); 
-    const dateObj = new Date(timeMs);
-    history.push({
-      id: timeMs,
-      timestamp: dateObj.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
-      shortTime: dateObj.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
-      solarV: (12 + Math.random() * 3).toFixed(1),
-      solarI: (2 + Math.random() * 3).toFixed(1),
-      solarP: (30 + Math.random() * 40).toFixed(1),
-      batteryPct: Math.floor(60 + Math.random() * 40),
-      loadP: (20 + Math.random() * 20).toFixed(1),
-      gridStatus: Math.random() > 0.5 ? 'Exporting' : 'Importing'
-    });
-  }
-  return history.reverse(); 
-};
 
 // ==========================================
 // 3. PROVIDERS
@@ -176,7 +149,7 @@ const DataProvider = ({ children, user }) => {
     const selected = clients.find(c => c.uid === uid);
     if (selected) {
       setActiveClient(selected);
-      setHistory([]); // Clear history on switch
+      setHistory([]); // Clear history visually to load new client's data
     }
   };
 
@@ -234,73 +207,73 @@ const DataProvider = ({ children, user }) => {
     }
   }, [liveData.battery.percentage, liveData.relays.mode, liveData.weather.current, activeClient]);
 
-  // Sync with Firestore (PURE FETCH FOR HARDWARE) or SIMULATE
+  // PERMANENT FIREBASE SYNC (Live Data + History Fetching)
   useEffect(() => {
     let unsubLive = null;
     let unsubHist = null;
-    let interval = null;
+    let simInterval = null;
 
-    if (!activeClient) return;
+    if (!activeClient || !db) return;
 
-    if (activeClient.dataType === 'real' && activeClient.espId && db) {
-      // 1. Listen to Live Hardware State
-      const docRef = doc(db, 'devices', activeClient.espId);
-      unsubLive = onSnapshot(docRef, (docSnap) => {
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          const espTime = data.timestamp ? parseInt(data.timestamp) * 1000 : Date.now();
-          
-          setLiveData(prev => ({
-            ...prev,
-            timestamp: espTime,
-            solar: {
-              voltage: data.solar?.voltage ?? prev.solar.voltage,
-              current: data.solar?.current ?? prev.solar.current,
-              power: data.solar?.power ?? prev.solar.power
-            },
-            battery: {
-              percentage: data.battery?.percentage ?? prev.battery.percentage,
-              voltage: data.battery?.voltage ?? prev.battery.voltage,
-              temp: data.battery?.temp ?? prev.battery.temp
-            },
-            load: {
-              power: data.load?.power ?? prev.load.power
-            },
-            grid: {
-              voltage: data.grid?.voltage ?? prev.grid.voltage,
-              importExport: data.grid?.importExport ?? prev.grid.importExport
-            },
-            relays: data.relays || prev.relays,
-          }));
-        }
+    const deviceId = activeClient.dataType === 'real' ? activeClient.espId : `sim_${activeClient.uid}`;
+
+    // 1. Listen to Live State from Firebase
+    const docRef = doc(db, 'devices', deviceId);
+    unsubLive = onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        const espTime = data.timestamp ? parseInt(data.timestamp) * 1000 : Date.now();
+        
+        setLiveData(prev => ({
+          ...prev,
+          timestamp: espTime,
+          solar: {
+            voltage: data.solar?.voltage ?? prev.solar.voltage,
+            current: data.solar?.current ?? prev.solar.current,
+            power: data.solar?.power ?? prev.solar.power
+          },
+          battery: {
+            percentage: data.battery?.percentage ?? prev.battery.percentage,
+            voltage: data.battery?.voltage ?? prev.battery.voltage,
+            temp: data.battery?.temp ?? prev.battery.temp
+          },
+          load: { power: data.load?.power ?? prev.load.power },
+          grid: {
+            voltage: data.grid?.voltage ?? prev.grid.voltage,
+            importExport: data.grid?.importExport ?? prev.grid.importExport
+          },
+          relays: data.relays || prev.relays,
+        }));
+      }
+    });
+
+    // 2. Fetch PERMANENT History from Firebase (Increased limit to hold days of data)
+    const histQuery = query(collection(db, 'devices', deviceId, 'history'), orderBy('id', 'desc'), limit(3000));
+    unsubHist = onSnapshot(histQuery, (snap) => {
+      const fetchedHist = snap.docs.map(d => {
+        const raw = d.data();
+        const timeMs = parseInt(raw.id || d.id);
+        const dateObj = new Date(timeMs);
+        return {
+          id: timeMs,
+          timestamp: dateObj.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
+          shortTime: dateObj.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
+          solarV: (parseFloat(raw.solarV) || 0).toFixed(1),
+          solarI: (parseFloat(raw.solarI) || 0).toFixed(1),
+          solarP: (parseFloat(raw.solarP) || 0).toFixed(1),
+          batteryPct: parseInt(raw.batteryPct) || 0,
+          loadP: (parseFloat(raw.loadP) || 0).toFixed(1),
+          gridStatus: (parseFloat(raw.gridExport) || 0) < 0 ? 'Exporting' : 'Importing'
+        };
       });
+      setHistory(fetchedHist);
+    });
 
-      // 2. Pure Fetch from Firebase History (No writing from Web)
-      const histQuery = query(collection(db, 'devices', activeClient.espId, 'history'), orderBy('id', 'desc'), limit(100));
-      unsubHist = onSnapshot(histQuery, (snap) => {
-        const fetchedHist = snap.docs.map(d => {
-          const raw = d.data();
-          const dateObj = new Date(parseInt(raw.id));
-          return {
-            id: parseInt(raw.id),
-            timestamp: dateObj.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
-            shortTime: dateObj.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
-            solarV: (parseFloat(raw.solarV) || 0).toFixed(1),
-            solarI: (parseFloat(raw.solarI) || 0).toFixed(1),
-            solarP: (parseFloat(raw.solarP) || 0).toFixed(1),
-            batteryPct: parseInt(raw.batteryPct) || 0,
-            loadP: (parseFloat(raw.loadP) || 0).toFixed(1),
-            gridStatus: (parseFloat(raw.gridExport) || 0) < 0 ? 'Exporting' : 'Importing'
-          };
-        });
-        setHistory(fetchedHist);
-      });
-
-    } else {
-      // Simulator for non-hardware clients
-      if (history.length === 0) setHistory(generateInitialHistory());
-
-      interval = setInterval(() => {
+    // 3. Simulator Engine (Writes purely to Firebase so even sim data is permanent)
+    if (activeClient.dataType === 'sim') {
+      let tickCount = 0;
+      simInterval = setInterval(() => {
+        tickCount++;
         const simTime = Date.now();
         setLiveData(prev => {
           let newBat = prev.battery.percentage;
@@ -309,32 +282,34 @@ const DataProvider = ({ children, user }) => {
           newBat = Math.max(0, Math.min(100, newBat)); 
           const newSolarP = Math.max(0, prev.solar.power + (Math.random() * 2 - 1));
           const newLoadP = Math.max(10, 20 + (Math.random() * 2 - 1));
+          const gridExp = newLoadP - newSolarP;
           
-          const updatedData = {
-            ...prev,
-            timestamp: simTime,
-            solar: { ...prev.solar, power: Number(newSolarP.toFixed(1)) },
-            battery: { ...prev.battery, percentage: Number(newBat.toFixed(1)) },
-            load: { ...prev.load, power: Number(newLoadP.toFixed(1)) },
-            grid: { ...prev.grid, importExport: Number((newLoadP - newSolarP).toFixed(1)) }
-          };
-          
-          // Append Local History
-          const dateObj = new Date(simTime);
-          const newEntry = {
-            id: simTime,
-            timestamp: dateObj.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
-            shortTime: dateObj.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
-            solarV: updatedData.solar.voltage.toFixed(1),
-            solarI: updatedData.solar.current.toFixed(1),
-            solarP: updatedData.solar.power.toFixed(1),
-            batteryPct: Math.round(updatedData.battery.percentage),
-            loadP: updatedData.load.power.toFixed(1),
-            gridStatus: updatedData.grid.importExport < 0 ? 'Exporting' : 'Importing'
-          };
-          setHistory(oldHist => [newEntry, ...oldHist].slice(0, 100));
+          // Push LIVE to Firebase
+          setDoc(docRef, {
+            timestamp: Math.floor(simTime / 1000), // Match ESP32 format
+            solar: { power: newSolarP, voltage: prev.solar.voltage, current: prev.solar.current },
+            battery: { percentage: newBat, voltage: prev.battery.voltage, temp: prev.battery.temp },
+            load: { power: newLoadP },
+            grid: { importExport: gridExp },
+            relays: prev.relays
+          }, { merge: true });
 
-          return updatedData;
+          // Push HISTORY to Firebase (Every 10 ticks = 30 seconds for simulation speed)
+          if (tickCount >= 10) {
+            tickCount = 0;
+            const timeMsStr = simTime.toString();
+            setDoc(doc(db, 'devices', deviceId, 'history', timeMsStr), {
+              id: timeMsStr,
+              solarV: prev.solar.voltage,
+              solarI: prev.solar.current,
+              solarP: newSolarP,
+              batteryPct: newBat,
+              loadP: newLoadP,
+              gridExport: gridExp
+            });
+          }
+
+          return { ...prev, timestamp: simTime, solar: { ...prev.solar, power: newSolarP }, battery: { ...prev.battery, percentage: newBat }, load: { ...prev.load, power: newLoadP }, grid: { ...prev.grid, importExport: gridExp } };
         });
       }, 3000);
     }
@@ -342,7 +317,7 @@ const DataProvider = ({ children, user }) => {
     return () => {
       if (unsubLive) unsubLive();
       if (unsubHist) unsubHist();
-      if (interval) clearInterval(interval);
+      if (simInterval) clearInterval(simInterval);
     };
   }, [activeClient]);
 
@@ -1153,12 +1128,12 @@ const RelayPage = () => {
 const HistoryPage = () => {
   const { history } = useContext(DataContext);
   const { addToast } = useContext(ToastContext);
-  const [filter, setFilter] = useState('1h');
+  const [filter, setFilter] = useState('1d');
 
   // Aggregation Logic for Data Logs
   const getGroupedHistory = (hist, filterType) => {
     let cutoff = Date.now();
-    let bucketSizeMs = 60000; // 1 min
+    let bucketSizeMs = 60000; // default 1 min
 
     if (filterType === '1h') { cutoff -= 3600000; bucketSizeMs = 60000; }
     else if (filterType === '6h') { cutoff -= 6 * 3600000; bucketSizeMs = 5 * 60000; }
@@ -1334,10 +1309,6 @@ const BillingPage = () => {
 
 const UsersPage = () => {
   const { clients, api, liveData } = useContext(DataContext);
-
-  // We consider a client "live" roughly if the active client is this one and its data is recent.
-  // Real apps would check individual last active fields per user.
-  const isCurrentlyLive = (Date.now() - liveData.timestamp) < 15000;
 
   return (
     <div className={`${modernCard} overflow-hidden`}>
