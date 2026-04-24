@@ -82,30 +82,6 @@ const ThemeContext = createContext();
 const ToastContext = createContext();
 const DataContext = createContext();
 
-const generateInitialHistory = () => {
-  const history = [];
-  let now = Date.now();
-  for (let i = 0; i < 50; i++) {
-    const timeMs = now - ((50 - i) * 3000); 
-    const dateObj = new Date(timeMs);
-    history.push({
-      id: timeMs,
-      timestamp: dateObj.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
-      shortTime: dateObj.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
-      solarV: (12 + Math.random() * 3).toFixed(1),
-      solarI: (2 + Math.random() * 3).toFixed(1),
-      solarP: (30 + Math.random() * 40).toFixed(1),
-      batteryPct: Math.floor(60 + Math.random() * 40),
-      loadP: (20 + Math.random() * 20).toFixed(1),
-      gridStatus: Math.random() > 0.5 ? 'Exporting' : 'Importing'
-    });
-  }
-  return history.reverse(); 
-};
-
-// ==========================================
-// 3. PROVIDERS
-// ==========================================
 const ToastProvider = ({ children }) => {
   const [toasts, setToasts] = useState([]);
   const addToast = (message, type = 'info') => {
@@ -148,7 +124,7 @@ const DataProvider = ({ children, user }) => {
     relays: { mode: 'auto', r1: true, r2: true, r3: false },
     weather: { current: null, forecast: [], loading: true },
     mlDecision: null,
-    billing: { imported: 145.2, exported: 82.5, lastReset: '2026-04-01' }
+    billing: { imported: 0, exported: 0, lastReset: new Date().toISOString() } // Starts Real-Time Accumulator
   });
 
   useEffect(() => {
@@ -224,6 +200,7 @@ const DataProvider = ({ children, user }) => {
     }
   }, [liveData.battery.percentage, liveData.relays.mode, liveData.weather.current, activeClient]);
 
+  // PERMANENT FIREBASE SYNC 
   useEffect(() => {
     let unsubLive = null;
     let unsubHist = null;
@@ -233,6 +210,7 @@ const DataProvider = ({ children, user }) => {
 
     const deviceId = activeClient.dataType === 'real' ? activeClient.espId : `sim_${activeClient.uid}`;
 
+    // Listen to Live State & Billing
     const docRef = doc(db, 'devices', deviceId);
     unsubLive = onSnapshot(docRef, (docSnap) => {
       if (docSnap.exists()) {
@@ -258,11 +236,16 @@ const DataProvider = ({ children, user }) => {
             importExport: data.grid?.importExport ?? prev.grid.importExport
           },
           relays: data.relays || prev.relays,
+          billing: {
+            imported: data.billing?.imported ?? prev.billing.imported,
+            exported: data.billing?.exported ?? prev.billing.exported,
+            lastReset: data.billing?.lastReset ?? prev.billing.lastReset
+          }
         }));
       }
     });
 
-    const histQuery = query(collection(db, 'devices', deviceId, 'history'), orderBy('id', 'desc'), limit(3000));
+    const histQuery = query(collection(db, 'devices', deviceId, 'history'), orderBy('id', 'desc'), limit(1000));
     unsubHist = onSnapshot(histQuery, (snap) => {
       const fetchedHist = snap.docs.map(d => {
         const raw = d.data();
@@ -283,11 +266,17 @@ const DataProvider = ({ children, user }) => {
       setHistory(fetchedHist);
     });
 
+    // SIMULATOR BILLING ACCUMULATION ENGINE
     if (activeClient.dataType === 'sim') {
       let tickCount = 0;
+      let lastTime = Date.now();
+
       simInterval = setInterval(() => {
         tickCount++;
         const simTime = Date.now();
+        const deltaHours = (simTime - lastTime) / 3600000.0;
+        lastTime = simTime;
+
         setLiveData(prev => {
           let newBat = prev.battery.percentage;
           if (prev.relays.r1) newBat += 0.8; 
@@ -297,13 +286,20 @@ const DataProvider = ({ children, user }) => {
           const newLoadP = Math.max(10, 20 + (Math.random() * 2 - 1));
           const gridExp = newLoadP - newSolarP;
           
+          // Real-Time Simulator Billing Math
+          const addedImport = gridExp > 0 ? (gridExp * deltaHours) / 1000.0 : 0;
+          const addedExport = gridExp < 0 ? (Math.abs(gridExp) * deltaHours) / 1000.0 : 0;
+          const newImportTotal = prev.billing.imported + addedImport;
+          const newExportTotal = prev.billing.exported + addedExport;
+
           setDoc(docRef, {
             timestamp: Math.floor(simTime / 1000), 
             solar: { power: newSolarP, voltage: prev.solar.voltage, current: prev.solar.current },
             battery: { percentage: newBat, voltage: prev.battery.voltage, temp: prev.battery.temp },
             load: { power: newLoadP },
             grid: { importExport: gridExp },
-            relays: prev.relays
+            relays: prev.relays,
+            billing: { imported: newImportTotal, exported: newExportTotal }
           }, { merge: true });
 
           if (tickCount >= 10) {
@@ -320,7 +316,7 @@ const DataProvider = ({ children, user }) => {
             });
           }
 
-          return { ...prev, timestamp: simTime, solar: { ...prev.solar, power: newSolarP }, battery: { ...prev.battery, percentage: newBat }, load: { ...prev.load, power: newLoadP }, grid: { ...prev.grid, importExport: gridExp } };
+          return { ...prev, timestamp: simTime, solar: { ...prev.solar, power: newSolarP }, battery: { ...prev.battery, percentage: newBat }, load: { ...prev.load, power: newLoadP }, grid: { ...prev.grid, importExport: gridExp }, billing: { imported: newImportTotal, exported: newExportTotal, lastReset: prev.billing.lastReset } };
         });
       }, 3000);
     }
@@ -441,12 +437,10 @@ export default function App() {
       <ToastProvider>
         <AuthContext.Provider value={{ user, setUser }}>
           <div className="min-h-screen font-sans flex flex-col relative bg-[#F4F6F8] dark:bg-[#09090E] text-slate-900 dark:text-slate-100 transition-colors duration-500 overflow-x-hidden selection:bg-emerald-500/30">
-            {/* Global CSS Enhancements */}
             <style>{`
               .no-scrollbar::-webkit-scrollbar { display: none; }
               .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
               
-              /* Glassmorphism Background Elements */
               .glass-bg-elements { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
               .blob-1 { position: absolute; top: -10%; left: -10%; width: 50%; height: 50%; background: rgba(16, 185, 129, 0.15); filter: blur(120px); border-radius: 50%; animation: pulse-slow 8s infinite alternate; }
               .blob-2 { position: absolute; bottom: -10%; right: -10%; width: 50%; height: 50%; background: rgba(99, 102, 241, 0.12); filter: blur(120px); border-radius: 50%; animation: pulse-slow 10s infinite alternate-reverse; }
@@ -458,14 +452,12 @@ export default function App() {
                 100% { transform: scale(1.1) translate(20px, 20px); opacity: 1; }
               }
 
-              /* Page Transition */
               @keyframes fadeSlideUp {
                 from { opacity: 0; transform: translateY(20px); }
                 to { opacity: 1; transform: translateY(0); }
               }
               .animate-fade-slide-up { animation: fadeSlideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
               
-              /* Spring easing for UI elements */
               .ease-spring { transition-timing-function: cubic-bezier(0.175, 0.885, 0.32, 1.275); }
             `}</style>
             
@@ -678,7 +670,6 @@ const MainLayout = () => {
     }
   };
 
-  // Animated Nav Pill Logic
   const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0, opacity: 0 });
   const navRefs = useRef([]);
 
@@ -885,7 +876,6 @@ const ProfilePage = () => {
         </div>
         
         <div className="p-8 space-y-8">
-          {/* Read-only System Fields */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pb-8 border-b border-slate-200/50 dark:border-white/5">
             <div className="bg-slate-50/50 dark:bg-[#1A1A24]/30 p-4 rounded-2xl border border-slate-200/50 dark:border-white/5">
               <div className="text-[10px] uppercase font-bold tracking-widest text-slate-500 mb-1">Email Address</div>
@@ -903,7 +893,6 @@ const ProfilePage = () => {
             )}
           </div>
 
-          {/* Editable Fields */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div className="space-y-2">
               <label className="text-[11px] uppercase font-extrabold tracking-widest text-slate-500 flex items-center gap-2 ml-1"><Users className="w-3.5 h-3.5"/> Full Name</label>
@@ -943,9 +932,8 @@ const DashboardPage = () => {
   const { theme } = useContext(ThemeContext);
   const isRealHardware = activeClient?.dataType === 'real';
 
-  // 1 Hour Graph Data
   const getOneHourChartData = () => {
-    const oneHourAgo = Date.now() - 3600000; // 1 hour in ms
+    const oneHourAgo = Date.now() - 3600000; 
     let recentHistory = history.filter(h => h.id >= oneHourAgo);
     
     const sampleRate = Math.ceil(recentHistory.length / 60) || 1;
@@ -1373,7 +1361,7 @@ const BillingPage = () => {
             <ArrowRightLeft className="w-5 h-5 text-orange-500"/>
           </div>
           <div className="text-slate-500 dark:text-slate-400 text-[10px] font-extrabold uppercase tracking-widest mb-1">Total Grid Import</div>
-          <div className="text-3xl font-black text-slate-900 dark:text-white mb-2 tracking-tight">{liveData.billing.imported.toFixed(1)} <span className="text-sm font-semibold text-slate-400">kWh</span></div>
+          <div className="text-3xl font-black text-slate-900 dark:text-white mb-2 tracking-tight">{liveData.billing.imported.toFixed(4)} <span className="text-sm font-semibold text-slate-400">kWh</span></div>
           <div className="text-xs font-bold text-orange-500 bg-orange-50 dark:bg-orange-900/20 px-3 py-1 rounded-full border border-orange-100 dark:border-orange-800/50">Cost Accrued: ₹{(liveData.billing.imported * TARIFF.BUY).toFixed(2)}</div>
         </div>
         <div className={`${modernCard} p-6 flex flex-col justify-center text-center items-center`}>
@@ -1381,7 +1369,7 @@ const BillingPage = () => {
             <Sun className="w-5 h-5 text-emerald-500"/>
           </div>
           <div className="text-slate-500 dark:text-slate-400 text-[10px] font-extrabold uppercase tracking-widest mb-1">Total Solar Export</div>
-          <div className="text-3xl font-black text-slate-900 dark:text-white mb-2 tracking-tight">{liveData.billing.exported.toFixed(1)} <span className="text-sm font-semibold text-slate-400">kWh</span></div>
+          <div className="text-3xl font-black text-slate-900 dark:text-white mb-2 tracking-tight">{liveData.billing.exported.toFixed(4)} <span className="text-sm font-semibold text-slate-400">kWh</span></div>
           <div className="text-xs font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 px-3 py-1 rounded-full border border-emerald-100 dark:border-emerald-800/50">Revenue Generated: ₹{(liveData.billing.exported * TARIFF.SELL).toFixed(2)}</div>
         </div>
         <div className={`${modernCard} p-6 flex flex-col justify-center text-center items-center ${netTotal > 0 ? 'ring-2 ring-orange-500/50 bg-orange-50/30 dark:bg-orange-900/10' : 'ring-2 ring-emerald-500/50 bg-emerald-50/30 dark:bg-emerald-900/10'}`}>
@@ -1389,7 +1377,7 @@ const BillingPage = () => {
           <div className={`text-5xl font-black tracking-tighter mb-3 group-hover:scale-105 transition-transform duration-300 ease-spring ${netTotal > 0 ? 'text-orange-600 dark:text-orange-500' : 'text-emerald-600 dark:text-emerald-500'}`}>
             ₹{Math.abs(netTotal).toFixed(2)}
           </div>
-          <div className="text-xs font-bold text-slate-600 dark:text-slate-400">{netTotal > 0 ? 'Outstanding due to BESCOM Utility' : 'Surplus Credit in Account'}</div>
+          <div className="text-xs font-bold text-slate-600 dark:text-slate-400">{netTotal > 0 ? 'Outstanding due to Utility' : 'Surplus Credit in Account'}</div>
         </div>
       </div>
       
@@ -1423,13 +1411,13 @@ const BillingPage = () => {
                </tr>
                <tr className="border-b border-slate-100/50 dark:border-white/5 hover:bg-slate-50/50 dark:hover:bg-[#1A1A24]/30 transition-colors">
                  <td className="py-5 font-bold text-slate-900 dark:text-slate-100 pl-2">Power Utilized from Grid</td>
-                 <td className="py-5 text-right font-bold text-slate-600 dark:text-slate-400">{liveData.billing.imported.toFixed(2)}</td>
+                 <td className="py-5 text-right font-bold text-slate-600 dark:text-slate-400">{liveData.billing.imported.toFixed(4)}</td>
                  <td className="py-5 text-right font-bold text-slate-600 dark:text-slate-400">₹{TARIFF.BUY}</td>
                  <td className="py-5 text-right font-black text-orange-500 pr-2">+ ₹{(liveData.billing.imported * TARIFF.BUY).toFixed(2)}</td>
                </tr>
                <tr className="border-b border-slate-200/50 dark:border-white/10 hover:bg-slate-50/50 dark:hover:bg-[#1A1A24]/30 transition-colors">
                  <td className="py-5 font-bold text-slate-900 dark:text-slate-100 pl-2">Power Sold to Grid</td>
-                 <td className="py-5 text-right font-bold text-slate-600 dark:text-slate-400">{liveData.billing.exported.toFixed(2)}</td>
+                 <td className="py-5 text-right font-bold text-slate-600 dark:text-slate-400">{liveData.billing.exported.toFixed(4)}</td>
                  <td className="py-5 text-right font-bold text-slate-600 dark:text-slate-400">₹{TARIFF.SELL}</td>
                  <td className="py-5 text-right font-black text-emerald-500 pr-2">- ₹{(liveData.billing.exported * TARIFF.SELL).toFixed(2)}</td>
                </tr>
