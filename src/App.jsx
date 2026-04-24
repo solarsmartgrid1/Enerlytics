@@ -597,6 +597,16 @@ const LoginPage = () => {
           </div>
         </div>
       </div>
+
+      {/* Login Page Footer */}
+      <div className="absolute bottom-6 left-0 w-full text-center px-4 pointer-events-none">
+        <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+          &copy; {new Date().getFullYear()} Solar Enerlytics. All rights reserved.
+        </p>
+        <p className="text-xs font-medium text-slate-400 dark:text-slate-500 mt-1">
+          Designed & Developed by <span className="font-bold text-emerald-600 dark:text-emerald-500">Arya and Team, RVCE</span>
+        </p>
+      </div>
     </div>
   );
 };
@@ -720,6 +730,24 @@ const MainLayout = () => {
         </div>
         {renderPage()}
       </main>
+
+      {/* Main Dashboard Footer */}
+      <footer className="w-full border-t border-slate-200 dark:border-[#2A2A35] bg-white dark:bg-[#12121A] mt-auto shrink-0">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="flex flex-col items-center md:items-start">
+            <div className="flex items-center gap-1.5 text-slate-900 dark:text-white font-bold text-sm mb-1">
+              <Zap className="w-4 h-4 text-emerald-500" />
+              Solar Enerlytics
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+              &copy; {new Date().getFullYear()} All rights reserved. Secure Grid Management.
+            </p>
+          </div>
+          <div className="text-xs font-medium text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-[#1A1A24] px-4 py-2 rounded-full border border-slate-200 dark:border-[#2A2A35] shadow-sm">
+            Designed & Developed by <span className="text-emerald-600 dark:text-emerald-400 font-bold">Arya and Team, RVCE</span>
+          </div>
+        </div>
+      </footer>
     </>
   );
 };
