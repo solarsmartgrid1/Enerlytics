@@ -81,6 +81,27 @@ const ThemeContext = createContext();
 const ToastContext = createContext();
 const DataContext = createContext();
 
+const generateInitialHistory = () => {
+  const history = [];
+  let now = Date.now();
+  for (let i = 0; i < 50; i++) {
+    const timeMs = now - ((50 - i) * 3000); 
+    const dateObj = new Date(timeMs);
+    history.push({
+      id: timeMs,
+      timestamp: dateObj.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
+      shortTime: dateObj.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
+      solarV: (12 + Math.random() * 3).toFixed(1),
+      solarI: (2 + Math.random() * 3).toFixed(1),
+      solarP: (30 + Math.random() * 40).toFixed(1),
+      batteryPct: Math.floor(60 + Math.random() * 40),
+      loadP: (20 + Math.random() * 20).toFixed(1),
+      gridStatus: Math.random() > 0.5 ? 'Exporting' : 'Importing'
+    });
+  }
+  return history.reverse(); 
+};
+
 // ==========================================
 // 3. PROVIDERS
 // ==========================================
@@ -599,7 +620,7 @@ const LoginPage = () => {
       </div>
 
       {/* Login Page Footer */}
-      <div className="absolute bottom-6 left-0 w-full text-center px-4 pointer-events-none">
+      <div className="fixed bottom-6 left-0 w-full text-center px-4 pointer-events-none">
         <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
           &copy; {new Date().getFullYear()} Solar Enerlytics. All rights reserved.
         </p>
@@ -715,7 +736,7 @@ const MainLayout = () => {
         </div>
       </header>
 
-      <main className="flex-1 w-full max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
+      <main className="flex-1 w-full max-w-7xl mx-auto p-4 sm:p-6 lg:p-8 pb-28 md:pb-24">
         <div className="mb-6 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
            <div>
               <h1 className="text-2xl font-bold text-slate-900 dark:text-white capitalize">
@@ -732,18 +753,18 @@ const MainLayout = () => {
       </main>
 
       {/* Main Dashboard Footer */}
-      <footer className="w-full border-t border-slate-200 dark:border-[#2A2A35] bg-white dark:bg-[#12121A] mt-auto shrink-0">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="flex flex-col items-center md:items-start">
-            <div className="flex items-center gap-1.5 text-slate-900 dark:text-white font-bold text-sm mb-1">
+      <footer className="fixed bottom-0 left-0 z-40 w-full border-t border-slate-200 dark:border-[#2A2A35] bg-white/90 dark:bg-[#12121A]/90 backdrop-blur-md transition-colors duration-300">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 sm:py-4 flex flex-col sm:flex-row items-center justify-between gap-2 sm:gap-4">
+          <div className="flex flex-col items-center sm:items-start">
+            <div className="flex items-center gap-1.5 text-slate-900 dark:text-white font-bold text-sm mb-0.5">
               <Zap className="w-4 h-4 text-emerald-500" />
               Solar Enerlytics
             </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+            <p className="text-[10px] sm:text-xs text-slate-500 dark:text-slate-400 font-medium">
               &copy; {new Date().getFullYear()} All rights reserved. Secure Grid Management.
             </p>
           </div>
-          <div className="text-xs font-medium text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-[#1A1A24] px-4 py-2 rounded-full border border-slate-200 dark:border-[#2A2A35] shadow-sm">
+          <div className="text-[10px] sm:text-xs font-medium text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-[#1A1A24] px-4 py-1.5 rounded-full border border-slate-200 dark:border-[#2A2A35] shadow-sm">
             Designed & Developed by <span className="text-emerald-600 dark:text-emerald-400 font-bold">Arya and Team, RVCE</span>
           </div>
         </div>
