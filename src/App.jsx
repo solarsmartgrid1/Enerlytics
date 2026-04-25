@@ -15,16 +15,16 @@ import {
 import { initializeApp } from "firebase/app";
 import { getAnalytics } from "firebase/analytics";
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from "firebase/auth";
-import { getFirestore, doc, onSnapshot, setDoc, getDoc, collection, query, orderBy, limit, getDocs, deleteDoc, updateDoc } from "firebase/firestore";
+import { getFirestore, doc, onSnapshot, setDoc, getDoc, collection, query, orderBy, limit, deleteDoc, updateDoc, getDocs } from "firebase/firestore";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyAYnzbwy3L1gEMwFNoGBMrGt-Ck74g_xDo",
-  authDomain: "solarenerlytics.firebaseapp.com",
-  projectId: "solarenerlytics",
-  storageBucket: "solarenerlytics.firebasestorage.app",
-  messagingSenderId: "1092682628340",
-  appId: "1:1092682628340:web:9cae9719a98153dd0172a1",
-  measurementId: "G-6EMR6ZYPZH"
+  apiKey: "AIzaSyAPVgiwfcwmq_oTgwXtTOkWrXW4bCY_tXI",
+  authDomain: "solarenerlytics-141e0.firebaseapp.com",
+  projectId: "solarenerlytics-141e0",
+  storageBucket: "solarenerlytics-141e0.firebasestorage.app",
+  messagingSenderId: "59874418021",
+  appId: "1:59874418021:web:9aa10a78914f14e508558c",
+  measurementId: "G-42VZLJ68X9"
 };
 
 let app, analytics, auth, db;
@@ -124,7 +124,7 @@ const DataProvider = ({ children, user }) => {
     relays: { mode: 'auto', r1: true, r2: true, r3: false },
     weather: { current: null, forecast: [], loading: true },
     mlDecision: null,
-    billing: { imported: 0, exported: 0, lastReset: new Date().toISOString() } // Starts Real-Time Accumulator
+    billing: { imported: 0, exported: 0, lastReset: new Date().toISOString() } 
   });
 
   useEffect(() => {
@@ -245,7 +245,8 @@ const DataProvider = ({ children, user }) => {
       }
     });
 
-    const histQuery = query(collection(db, 'devices', deviceId, 'history'), orderBy('id', 'desc'), limit(1000));
+    // Load History. Scaled limit to 3000 to hold plenty of 3-second data loops
+    const histQuery = query(collection(db, 'devices', deviceId, 'history'), orderBy('id', 'desc'), limit(3000));
     unsubHist = onSnapshot(histQuery, (snap) => {
       const fetchedHist = snap.docs.map(d => {
         const raw = d.data();
@@ -266,13 +267,11 @@ const DataProvider = ({ children, user }) => {
       setHistory(fetchedHist);
     });
 
-    // SIMULATOR BILLING ACCUMULATION ENGINE
+    // SIMULATOR LOGIC
     if (activeClient.dataType === 'sim') {
-      let tickCount = 0;
       let lastTime = Date.now();
 
       simInterval = setInterval(() => {
-        tickCount++;
         const simTime = Date.now();
         const deltaHours = (simTime - lastTime) / 3600000.0;
         lastTime = simTime;
@@ -292,6 +291,7 @@ const DataProvider = ({ children, user }) => {
           const newImportTotal = prev.billing.imported + addedImport;
           const newExportTotal = prev.billing.exported + addedExport;
 
+          // Push Live & Billing
           setDoc(docRef, {
             timestamp: Math.floor(simTime / 1000), 
             solar: { power: newSolarP, voltage: prev.solar.voltage, current: prev.solar.current },
@@ -302,23 +302,21 @@ const DataProvider = ({ children, user }) => {
             billing: { imported: newImportTotal, exported: newExportTotal }
           }, { merge: true });
 
-          if (tickCount >= 10) {
-            tickCount = 0;
-            const timeMsStr = simTime.toString();
-            setDoc(doc(db, 'devices', deviceId, 'history', timeMsStr), {
-              id: timeMsStr,
-              solarV: prev.solar.voltage,
-              solarI: prev.solar.current,
-              solarP: newSolarP,
-              batteryPct: newBat,
-              loadP: newLoadP,
-              gridExport: gridExp
-            });
-          }
+          // Push History Every 3 Seconds (Every Loop)
+          const timeMsStr = simTime.toString();
+          setDoc(doc(db, 'devices', deviceId, 'history', timeMsStr), {
+            id: timeMsStr,
+            solarV: prev.solar.voltage,
+            solarI: prev.solar.current,
+            solarP: newSolarP,
+            batteryPct: newBat,
+            loadP: newLoadP,
+            gridExport: gridExp
+          });
 
           return { ...prev, timestamp: simTime, solar: { ...prev.solar, power: newSolarP }, battery: { ...prev.battery, percentage: newBat }, load: { ...prev.load, power: newLoadP }, grid: { ...prev.grid, importExport: gridExp }, billing: { imported: newImportTotal, exported: newExportTotal, lastReset: prev.billing.lastReset } };
         });
-      }, 3000);
+      }, 3000); // 3 Second Loop
     }
 
     return () => {
@@ -412,7 +410,7 @@ export default function App() {
           if (userDoc.exists()) {
             setUser({ uid: firebaseUser.uid, ...userDoc.data() });
           } else {
-            const role = firebaseUser.email === 'admin@solarenerlytics.com' ? 'admin' : 'user';
+            const role = firebaseUser.email === 'dilipgowda7259@gmail.com' ? 'admin' : 'user';
             setUser({ uid: firebaseUser.uid, email: firebaseUser.email, role, dataType: 'sim', name: firebaseUser.email.split('@')[0], mobile: 'N/A', location: 'N/A' });
           }
         } else {
@@ -482,8 +480,8 @@ export default function App() {
 
 const LoginPage = () => {
   const [isSignUp, setIsSignUp] = useState(false);
-  const [email, setEmail] = useState('admin@solarenerlytics.com');
-  const [password, setPassword] = useState('Admin@1234');
+  const [email, setEmail] = useState('dilipgowda7259@gmail.com');
+  const [password, setPassword] = useState('RVCE@1234');
   
   const [name, setName] = useState('');
   const [mobile, setMobile] = useState('');
@@ -523,7 +521,7 @@ const LoginPage = () => {
         try {
           await signInWithEmailAndPassword(auth, email, password);
         } catch (loginErr) {
-          if (email === 'admin@solarenerlytics.com' && password === 'Admin@1234' && (loginErr.code === 'auth/user-not-found' || loginErr.code === 'auth/invalid-credential')) {
+          if (email === 'dilipgowda7259@gmail.com' && password === 'RVCE@1234' && (loginErr.code === 'auth/user-not-found' || loginErr.code === 'auth/invalid-credential')) {
             const userCred = await createUserWithEmailAndPassword(auth, email, password);
             await setDoc(doc(db, 'users', userCred.user.uid), {
               name: 'System Admin', email, mobile: '0000000000', location: 'Headquarters', role: 'admin', dataType: 'sim', espId: ''
@@ -783,7 +781,6 @@ const MainLayout = () => {
         </div>
       </main>
 
-      {/* Main Dashboard Footer */}
       <footer className="fixed bottom-0 left-0 z-40 w-full border-t border-slate-200/50 dark:border-white/5 bg-white/70 dark:bg-[#0a0a0f]/70 backdrop-blur-2xl transition-colors duration-500">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col sm:flex-row items-center justify-between gap-3">
           <div className="flex flex-col items-center sm:items-start">
@@ -936,6 +933,8 @@ const DashboardPage = () => {
     const oneHourAgo = Date.now() - 3600000; 
     let recentHistory = history.filter(h => h.id >= oneHourAgo);
     
+    // For 3-second data, 1 hour is 1200 points. Sample down slightly if needed so the browser chart doesn't lag.
+    // 60 points gives very smooth charts
     const sampleRate = Math.ceil(recentHistory.length / 60) || 1;
     return recentHistory.filter((_, i) => i % sampleRate === 0).reverse().map(h => ({
       time: h.shortTime,
@@ -1208,18 +1207,19 @@ const RelayPage = () => {
 const HistoryPage = () => {
   const { history } = useContext(DataContext);
   const { addToast } = useContext(ToastContext);
-  const [filter, setFilter] = useState('1d');
+  const [filter, setFilter] = useState('1h');
 
+  // Aggregation Logic - updated for 3-second data density
   const getGroupedHistory = (hist, filterType) => {
     let cutoff = Date.now();
-    let bucketSizeMs = 60000; 
+    let bucketSizeMs = 3000; // Default to 3 second raw data for demo
 
-    if (filterType === '1h') { cutoff -= 3600000; bucketSizeMs = 60000; }
-    else if (filterType === '6h') { cutoff -= 6 * 3600000; bucketSizeMs = 5 * 60000; }
-    else if (filterType === '12h') { cutoff -= 12 * 3600000; bucketSizeMs = 10 * 60000; }
-    else if (filterType === '1d') { cutoff -= 24 * 3600000; bucketSizeMs = 10 * 60000; }
-    else if (filterType === '7d') { cutoff -= 7 * 24 * 3600000; bucketSizeMs = 30 * 60000; }
-    else if (filterType === '1mo') { cutoff -= 30 * 24 * 3600000; bucketSizeMs = 120 * 60000; }
+    if (filterType === '1h') { cutoff -= 3600000; bucketSizeMs = 3000; } // Raw 3-Sec Data
+    else if (filterType === '6h') { cutoff -= 6 * 3600000; bucketSizeMs = 60000; } // 1 Min avg
+    else if (filterType === '12h') { cutoff -= 12 * 3600000; bucketSizeMs = 300000; } // 5 Min avg
+    else if (filterType === '1d') { cutoff -= 24 * 3600000; bucketSizeMs = 600000; } // 10 Min avg
+    else if (filterType === '7d') { cutoff -= 7 * 24 * 3600000; bucketSizeMs = 1800000; } // 30 Min avg
+    else if (filterType === '1mo') { cutoff -= 30 * 24 * 3600000; bucketSizeMs = 7200000; } // 2 Hr avg
 
     const filtered = hist.filter(h => h.id >= cutoff);
     const buckets = {};
@@ -1244,7 +1244,7 @@ const HistoryPage = () => {
        const d = new Date(parseInt(timeMs));
        return {
           id: parseInt(timeMs),
-          timestamp: d.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }),
+          timestamp: d.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
           solarV: (b.solarV / c).toFixed(1),
           solarI: (b.solarI / c).toFixed(1),
           solarP: (b.solarP / c).toFixed(1),
@@ -1292,9 +1292,9 @@ const HistoryPage = () => {
             onChange={(e) => setFilter(e.target.value)}
             className="bg-slate-100/80 dark:bg-[#1A1A24]/80 border border-slate-200/50 dark:border-white/10 text-slate-700 dark:text-slate-200 text-xs font-bold px-4 py-2.5 rounded-full outline-none cursor-pointer shadow-inner backdrop-blur-md appearance-none"
           >
-            <option value="1h">Last 1 Hour (Minute avg)</option>
-            <option value="6h">Last 6 Hours (5-Min avg)</option>
-            <option value="12h">Last 12 Hours (10-Min avg)</option>
+            <option value="1h">Last 1 Hour (Raw 3-Sec Data)</option>
+            <option value="6h">Last 6 Hours (1-Min avg)</option>
+            <option value="12h">Last 12 Hours (5-Min avg)</option>
             <option value="1d">Last 24 Hours (10-Min avg)</option>
             <option value="7d">Last 7 Days (30-Min avg)</option>
             <option value="1mo">Last 30 Days (2-Hour avg)</option>
@@ -1537,7 +1537,6 @@ const RelayControlCard = ({ title, desc, state, isAuto, onToggle, warning }) => 
         {state ? 'Circuit Engaged (NO)' : 'Circuit Bypassed (NC)'}
       </span>
       
-      {/* Custom iOS Style Spring Switch */}
       <button 
         onClick={onToggle} 
         disabled={isAuto} 
