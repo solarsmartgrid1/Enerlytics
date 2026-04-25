@@ -624,7 +624,7 @@ const LoginPage = () => {
           &copy; {new Date().getFullYear()} Solar Enerlytics. All rights reserved.
         </p>
         <p className="text-xs font-medium text-slate-400 dark:text-slate-500 mt-1">
-          Designed & Developed by <span className="font-bold text-emerald-600 dark:text-emerald-500">Arya and Team, RVCE</span>
+          Designed & Developed as a part of <span className="font-bold text-emerald-600 dark:text-emerald-500"> Final Year Project at RVCE</span>
         </p>
       </div>
     </div>
