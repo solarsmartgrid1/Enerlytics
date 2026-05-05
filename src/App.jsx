@@ -11,31 +11,12 @@ import {
   UserCog, MapPin, Phone, Edit2, Save, X
 } from 'lucide-react';
 
-// --- FIREBASE CONFIGURATION & INITIALIZATION ---
-import { initializeApp } from "firebase/app";
-import { getAnalytics } from "firebase/analytics";
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from "firebase/auth";
-import { getFirestore, doc, onSnapshot, setDoc, getDoc, collection, query, orderBy, limit, deleteDoc, updateDoc, getDocs } from "firebase/firestore";
+// --- SUPABASE CONFIGURATION ---
+import { createClient } from '@supabase/supabase-js';
 
-const firebaseConfig = {
-  apiKey: "AIzaSyAPVgiwfcwmq_oTgwXtTOkWrXW4bCY_tXI",
-  authDomain: "solarenerlytics-141e0.firebaseapp.com",
-  projectId: "solarenerlytics-141e0",
-  storageBucket: "solarenerlytics-141e0.firebasestorage.app",
-  messagingSenderId: "59874418021",
-  appId: "1:59874418021:web:9aa10a78914f14e508558c",
-  measurementId: "G-42VZLJ68X9"
-};
-
-let app, analytics, auth, db;
-try {
-  app = initializeApp(firebaseConfig);
-  analytics = getAnalytics(app);
-  auth = getAuth(app);
-  db = getFirestore(app);
-} catch (error) {
-  console.warn("Running in local simulation mode. Firebase SDK deferred.");
-}
+const SUPABASE_URL = "https://aodfguenuwdpymkbwzwn.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFvZGZndWVudXdkcHlta2J3enduIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5NDYyMzksImV4cCI6MjA5MzUyMjIzOX0.M4_I7a0--FaVN1RPoNVrGb6iIFYz24xM-_jOaosysIk";
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // ==========================================
 // 1. CONSTANTS, UTILS & ML PREDICTOR
@@ -108,6 +89,33 @@ const ToastProvider = ({ children }) => {
   );
 };
 
+// Helper parsers to seamlessly translate Supabase SQL Tables into our legacy JSON State format
+const mapDbToState = (data) => ({
+  timestamp: data.timestamp ? parseInt(data.timestamp) * 1000 : Date.now(),
+  solar: { power: data.solar_power ?? 0, voltage: data.solar_voltage ?? 0, current: data.solar_current ?? 0 },
+  battery: { percentage: data.battery_percentage ?? 0, voltage: data.battery_voltage ?? 0, temp: data.battery_temp ?? 29 },
+  load: { power: data.load_power ?? 0 },
+  grid: { importExport: data.grid_import_export ?? 0 },
+  relays: { r1: data.relay_r1 ?? false, r2: data.relay_r2 ?? false, r3: data.relay_r3 ?? false, mode: data.relay_mode ?? 'auto' },
+  billing: { imported: data.billing_imported ?? 0, exported: data.billing_exported ?? 0, lastReset: data.billing_last_reset ?? new Date().toISOString() }
+});
+
+const mapHistToState = (raw) => {
+  const timeMs = parseInt(raw.id);
+  const dateObj = new Date(timeMs);
+  return {
+    id: timeMs,
+    timestamp: dateObj.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
+    shortTime: dateObj.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
+    solarV: (parseFloat(raw.solarV) || 0).toFixed(1),
+    solarI: (parseFloat(raw.solarI) || 0).toFixed(1),
+    solarP: (parseFloat(raw.solarP) || 0).toFixed(1),
+    batteryPct: parseInt(raw.batteryPct) || 0,
+    loadP: (parseFloat(raw.loadP) || 0).toFixed(1),
+    gridStatus: (parseFloat(raw.gridExport) || 0) < 0 ? 'Exporting' : 'Importing'
+  };
+};
+
 const DataProvider = ({ children, user }) => {
   const { addToast } = useContext(ToastContext);
   
@@ -115,26 +123,17 @@ const DataProvider = ({ children, user }) => {
   const [activeClient, setActiveClient] = useState(user); 
   
   const [history, setHistory] = useState([]);
-  const [liveData, setLiveData] = useState({
-    timestamp: Date.now(),
-    solar: { voltage: 14.2, current: 4.5, power: 63.9 },
-    battery: { voltage: 12.8, percentage: 82, temp: 29 },
-    load: { power: 45.0 },
-    grid: { voltage: 230, importExport: -18.9 }, 
-    relays: { mode: 'auto', r1: true, r2: true, r3: false },
-    weather: { current: null, forecast: [], loading: true },
-    mlDecision: null,
-    billing: { imported: 0, exported: 0, lastReset: new Date().toISOString() } 
-  });
+  const [liveData, setLiveData] = useState(mapDbToState({}));
 
   useEffect(() => {
-    if (user.role === 'admin' && db) {
-      getDocs(collection(db, 'users')).then(snap => {
-        const fetchedClients = snap.docs.map(d => ({ uid: d.id, ...d.data() })).filter(u => u.role !== 'admin');
-        setClients(fetchedClients);
-        if (fetchedClients.length > 0 && activeClient.uid === user.uid) {
-          const hwClient = fetchedClients.find(c => c.dataType === 'real');
-          setActiveClient(hwClient || fetchedClients[0]); 
+    if (user.role === 'admin') {
+      supabase.from('users').select('*').neq('role', 'admin').then(({ data }) => {
+        if(data) {
+          setClients(data);
+          if (data.length > 0 && activeClient.uid === user.uid) {
+            const hwClient = data.find(c => c.dataType === 'real');
+            setActiveClient(hwClient || data[0]); 
+          }
         }
       });
     }
@@ -174,7 +173,7 @@ const DataProvider = ({ children, user }) => {
   }, []);
 
   useEffect(() => {
-    if (liveData.weather.current) {
+    if (liveData.weather?.current) {
       const decision = SolarMLPredictor.decideAction(liveData.weather.current.efficiencyPct, liveData.battery.percentage);
       setLiveData(prev => {
         let shouldUpdate = false;
@@ -190,88 +189,56 @@ const DataProvider = ({ children, user }) => {
           if (r1Changed || r2Changed || r3Changed) {
             updates.relays = { ...prev.relays, ...decision.relays };
             shouldUpdate = true;
-            if (activeClient.dataType === 'real' && activeClient.espId && db) {
-              setDoc(doc(db, 'devices', activeClient.espId), { relays: updates.relays }, { merge: true }).catch(()=>{});
+            if (activeClient.dataType === 'real' && activeClient.espId) {
+              supabase.from('devices').upsert({ 
+                id: activeClient.espId, 
+                relay_r1: decision.relays.r1, 
+                relay_r2: decision.relays.r2, 
+                relay_r3: decision.relays.r3 
+              }).then();
             }
           }
         }
         return shouldUpdate ? { ...prev, ...updates } : prev;
       });
     }
-  }, [liveData.battery.percentage, liveData.relays.mode, liveData.weather.current, activeClient]);
+  }, [liveData.battery.percentage, liveData.relays.mode, liveData.weather?.current, activeClient]);
 
-  // PERMANENT FIREBASE SYNC 
+  // SUPABASE REAL-TIME SYNC ENGINE
   useEffect(() => {
-    let unsubLive = null;
-    let unsubHist = null;
     let simInterval = null;
 
-    if (!activeClient || !db) return;
+    if (!activeClient) return;
 
     const deviceId = activeClient.dataType === 'real' ? activeClient.espId : `sim_${activeClient.uid}`;
 
-    // Listen to Live State & Billing
-    const docRef = doc(db, 'devices', deviceId);
-    unsubLive = onSnapshot(docRef, (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        const espTime = data.timestamp ? parseInt(data.timestamp) * 1000 : Date.now();
-        
-        setLiveData(prev => ({
-          ...prev,
-          timestamp: espTime,
-          solar: {
-            voltage: data.solar?.voltage ?? prev.solar.voltage,
-            current: data.solar?.current ?? prev.solar.current,
-            power: data.solar?.power ?? prev.solar.power
-          },
-          battery: {
-            percentage: data.battery?.percentage ?? prev.battery.percentage,
-            voltage: data.battery?.voltage ?? prev.battery.voltage,
-            temp: data.battery?.temp ?? prev.battery.temp
-          },
-          load: { power: data.load?.power ?? prev.load.power },
-          grid: {
-            voltage: data.grid?.voltage ?? prev.grid.voltage,
-            importExport: data.grid?.importExport ?? prev.grid.importExport
-          },
-          relays: data.relays || prev.relays,
-          billing: {
-            imported: data.billing?.imported ?? prev.billing.imported,
-            exported: data.billing?.exported ?? prev.billing.exported,
-            lastReset: data.billing?.lastReset ?? prev.billing.lastReset
-          }
-        }));
-      }
+    // 1. Initial State Fetch
+    supabase.from('devices').select('*').eq('id', deviceId).single().then(({data}) => {
+      if(data) setLiveData(prev => ({ ...prev, ...mapDbToState(data) }));
+    });
+    
+    supabase.from('history').select('*').eq('device_id', deviceId).order('id', {ascending: false}).limit(3000).then(({data}) => {
+      if(data) setHistory(data.map(mapHistToState));
     });
 
-    // Load History. Scaled limit to 3000 to hold plenty of 3-second data loops
-    const histQuery = query(collection(db, 'devices', deviceId, 'history'), orderBy('id', 'desc'), limit(3000));
-    unsubHist = onSnapshot(histQuery, (snap) => {
-      const fetchedHist = snap.docs.map(d => {
-        const raw = d.data();
-        const timeMs = parseInt(raw.id || d.id);
-        const dateObj = new Date(timeMs);
-        return {
-          id: timeMs,
-          timestamp: dateObj.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
-          shortTime: dateObj.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
-          solarV: (parseFloat(raw.solarV) || 0).toFixed(1),
-          solarI: (parseFloat(raw.solarI) || 0).toFixed(1),
-          solarP: (parseFloat(raw.solarP) || 0).toFixed(1),
-          batteryPct: parseInt(raw.batteryPct) || 0,
-          loadP: (parseFloat(raw.loadP) || 0).toFixed(1),
-          gridStatus: (parseFloat(raw.gridExport) || 0) < 0 ? 'Exporting' : 'Importing'
-        };
-      });
-      setHistory(fetchedHist);
-    });
+    // 2. Real-time Subscriptions (WebSockets)
+    const subDevices = supabase.channel('web-devices')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'devices', filter: `id=eq.${deviceId}` }, (payload) => {
+        if(payload.new) setLiveData(prev => ({ ...prev, ...mapDbToState(payload.new) }));
+      }).subscribe();
 
-    // SIMULATOR LOGIC
+    const subHistory = supabase.channel('web-history')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'history', filter: `device_id=eq.${deviceId}` }, (payload) => {
+        if(payload.new) setHistory(prev => [mapHistToState(payload.new), ...prev].slice(0, 3000));
+      }).subscribe();
+
+    // 3. Simulator Engine
     if (activeClient.dataType === 'sim') {
+      let tickCount = 0;
       let lastTime = Date.now();
 
       simInterval = setInterval(() => {
+        tickCount++;
         const simTime = Date.now();
         const deltaHours = (simTime - lastTime) / 3600000.0;
         lastTime = simTime;
@@ -292,27 +259,36 @@ const DataProvider = ({ children, user }) => {
           const newExportTotal = prev.billing.exported + addedExport;
 
           // Push Live & Billing
-          setDoc(docRef, {
+          supabase.from('devices').upsert({
+            id: deviceId, 
             timestamp: Math.floor(simTime / 1000), 
-            solar: { power: newSolarP, voltage: prev.solar.voltage, current: prev.solar.current },
-            battery: { percentage: newBat, voltage: prev.battery.voltage, temp: prev.battery.temp },
-            load: { power: newLoadP },
-            grid: { importExport: gridExp },
-            relays: prev.relays,
-            billing: { imported: newImportTotal, exported: newExportTotal }
-          }, { merge: true });
+            solar_power: newSolarP, 
+            solar_voltage: prev.solar.voltage, 
+            solar_current: prev.solar.current,
+            battery_percentage: newBat, 
+            battery_voltage: prev.battery.voltage, 
+            load_power: newLoadP,
+            grid_import_export: gridExp, 
+            billing_imported: newImportTotal, 
+            billing_exported: newExportTotal,
+            relay_r1: prev.relays.r1, 
+            relay_r2: prev.relays.r2, 
+            relay_r3: prev.relays.r3, 
+            relay_mode: prev.relays.mode
+          }).then();
 
           // Push History Every 3 Seconds (Every Loop)
           const timeMsStr = simTime.toString();
-          setDoc(doc(db, 'devices', deviceId, 'history', timeMsStr), {
-            id: timeMsStr,
-            solarV: prev.solar.voltage,
+          supabase.from('history').insert({
+            id: timeMsStr, 
+            device_id: deviceId, 
+            solarV: prev.solar.voltage, 
             solarI: prev.solar.current,
-            solarP: newSolarP,
-            batteryPct: newBat,
-            loadP: newLoadP,
+            solarP: newSolarP, 
+            batteryPct: newBat, 
+            loadP: newLoadP, 
             gridExport: gridExp
-          });
+          }).then();
 
           return { ...prev, timestamp: simTime, solar: { ...prev.solar, power: newSolarP }, battery: { ...prev.battery, percentage: newBat }, load: { ...prev.load, power: newLoadP }, grid: { ...prev.grid, importExport: gridExp }, billing: { imported: newImportTotal, exported: newExportTotal, lastReset: prev.billing.lastReset } };
         });
@@ -320,8 +296,8 @@ const DataProvider = ({ children, user }) => {
     }
 
     return () => {
-      if (unsubLive) unsubLive();
-      if (unsubHist) unsubHist();
+      supabase.removeChannel(subDevices);
+      supabase.removeChannel(subHistory);
       if (simInterval) clearInterval(simInterval);
     };
   }, [activeClient]);
@@ -329,20 +305,27 @@ const DataProvider = ({ children, user }) => {
   const api = {
     updateRelayMode: (mode) => {
       setLiveData(prev => ({ ...prev, relays: { ...prev.relays, mode } }));
-      if (activeClient?.dataType === 'real' && activeClient?.espId && db) {
-        setDoc(doc(db, 'devices', activeClient.espId), { relays: { mode } }, { merge: true }).catch(()=>{});
+      if (activeClient?.dataType === 'real' && activeClient?.espId) {
+        supabase.from('devices').upsert({ id: activeClient.espId, relay_mode: mode }).then();
       }
     },
     updateMultipleRelays: async (newRelays) => {
       setLiveData(prev => ({ ...prev, relays: { ...prev.relays, ...newRelays } }));
-      if (activeClient?.dataType === 'real' && activeClient?.espId && db) {
-        try { await setDoc(doc(db, 'devices', activeClient.espId), { relays: newRelays }, { merge: true }); } 
+      if (activeClient?.dataType === 'real' && activeClient?.espId) {
+        try { 
+          await supabase.from('devices').upsert({ 
+            id: activeClient.espId, 
+            relay_r1: newRelays.r1, 
+            relay_r2: newRelays.r2, 
+            relay_r3: newRelays.r3 
+          }); 
+        } 
         catch (e) { console.error("Hardware sync issue"); }
       }
     },
     deleteUser: async (uid) => {
       try {
-        await deleteDoc(doc(db, 'users', uid));
+        await supabase.from('users').delete().eq('uid', uid);
         setClients(prev => prev.filter(c => c.uid !== uid));
         addToast('Client removed from directory.', 'success');
       } catch (e) {
@@ -402,26 +385,41 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
-    if (!auth) return setAuthLoading(false);
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        if (db) {
-          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-          if (userDoc.exists()) {
-            setUser({ uid: firebaseUser.uid, ...userDoc.data() });
+    // Check active session on load
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        supabase.from('users').select('*').eq('uid', session.user.id).single().then(({data}) => {
+          if (data) {
+            setUser(data);
           } else {
-            const role = firebaseUser.email === 'dilipgowda7259@gmail.com' ? 'admin' : 'user';
-            setUser({ uid: firebaseUser.uid, email: firebaseUser.email, role, dataType: 'sim', name: firebaseUser.email.split('@')[0], mobile: 'N/A', location: 'N/A' });
+            const role = session.user.email === 'dilipgowda7259@gmail.com' ? 'admin' : 'user';
+            setUser({ uid: session.user.id, email: session.user.email, role, dataType: 'sim', name: session.user.email.split('@')[0], mobile: 'N/A', location: 'N/A', espId: '' });
           }
-        } else {
-          setUser({ uid: firebaseUser.uid, email: firebaseUser.email, role: 'admin', dataType: 'sim', name: 'Admin', mobile: 'N/A', location: 'N/A' });
-        }
+          setAuthLoading(false);
+        });
+      } else {
+        setUser(null);
+        setAuthLoading(false);
+      }
+    });
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        supabase.from('users').select('*').eq('uid', session.user.id).single().then(({data}) => {
+          if (data) {
+            setUser(data);
+          } else {
+             const role = session.user.email === 'dilipgowda7259@gmail.com' ? 'admin' : 'user';
+             setUser({ uid: session.user.id, email: session.user.email, role, dataType: 'sim', name: session.user.email.split('@')[0], mobile: 'N/A', location: 'N/A', espId: '' });
+          }
+        });
       } else {
         setUser(null);
       }
-      setAuthLoading(false);
     });
-    return () => unsubscribe();
+
+    return () => subscription.unsubscribe();
   }, []);
 
   if (authLoading) return (
@@ -510,35 +508,30 @@ const LoginPage = () => {
     setLoading(true);
 
     try {
-      if (!auth || !db) throw new Error("Firebase SDK not initialized.");
-
       if (isSignUp) {
-        const userCred = await createUserWithEmailAndPassword(auth, email, password);
-        await setDoc(doc(db, 'users', userCred.user.uid), {
-          name, email, mobile, location, role: 'user', dataType, espId: dataType === 'real' ? espId : ''
+        const { data, error: signUpError } = await supabase.auth.signUp({ email, password });
+        if (signUpError) throw signUpError;
+        
+        await supabase.from('users').insert({ 
+          uid: data.user.id, name, email, mobile, location, role: 'user', dataType, espId: dataType === 'real' ? espId : '' 
         });
       } else {
-        try {
-          await signInWithEmailAndPassword(auth, email, password);
-        } catch (loginErr) {
-          if (email === 'dilipgowda7259@gmail.com' && password === 'RVCE@1234' && (loginErr.code === 'auth/user-not-found' || loginErr.code === 'auth/invalid-credential')) {
-            const userCred = await createUserWithEmailAndPassword(auth, email, password);
-            await setDoc(doc(db, 'users', userCred.user.uid), {
-              name: 'System Admin', email, mobile: '0000000000', location: 'Headquarters', role: 'admin', dataType: 'sim', espId: ''
+        const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+        if (signInError) {
+          if (email === 'dilipgowda7259@gmail.com' && signInError.message.includes("Invalid login")) {
+            const { data: signUpData, error: adminSignUpError } = await supabase.auth.signUp({ email, password });
+            if (adminSignUpError) throw adminSignUpError;
+            
+            await supabase.from('users').insert({ 
+              uid: signUpData.user.id, name: 'System Admin', email, mobile: '0000000000', location: 'Headquarters', role: 'admin', dataType: 'sim', espId: '' 
             });
           } else {
-            throw loginErr;
+            throw signInError;
           }
         }
       }
     } catch (err) {
-      if (err.code === 'auth/too-many-requests') {
-         setError('Account temporarily locked due to too many failed attempts. Try again later.');
-      } else if (err.code === 'auth/email-already-in-use') {
-         setError('An account with this email already exists. Please log in.');
-      } else {
-         setError(err.message.replace('Firebase:', '').trim());
-      }
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -651,7 +644,7 @@ const MainLayout = () => {
   const filteredNav = NAV_ITEMS.filter(item => item.roles.includes(user.role));
 
   const handleLogout = async () => {
-    if (auth) try { await signOut(auth); } catch (e) {}
+    await supabase.auth.signOut();
     addToast('Logged out securely', 'info');
   };
 
@@ -825,8 +818,8 @@ const ProfilePage = () => {
   const handleSave = async () => {
     setLoading(true);
     try {
-      if (db && user.uid) {
-        await updateDoc(doc(db, 'users', user.uid), formData);
+      if (user.uid) {
+        await supabase.from('users').update(formData).eq('uid', user.uid);
         setUser({ ...user, ...formData });
         addToast("Profile updated successfully.", "success");
         setIsEditing(false);
@@ -1537,6 +1530,7 @@ const RelayControlCard = ({ title, desc, state, isAuto, onToggle, warning }) => 
         {state ? 'Circuit Engaged (NO)' : 'Circuit Bypassed (NC)'}
       </span>
       
+      {/* Custom iOS Style Spring Switch */}
       <button 
         onClick={onToggle} 
         disabled={isAuto} 
