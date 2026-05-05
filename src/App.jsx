@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 
 // --- SUPABASE CONFIGURATION ---
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const SUPABASE_URL = "https://aodfguenuwdpymkbwzwn.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFvZGZndWVudXdkcHlta2J3enduIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5NDYyMzksImV4cCI6MjA5MzUyMjIzOX0.M4_I7a0--FaVN1RPoNVrGb6iIFYz24xM-_jOaosysIk";
@@ -89,6 +89,50 @@ const ToastProvider = ({ children }) => {
   );
 };
 
+// --- GLOBAL ERROR BOUNDARY ---
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  
+  componentDidCatch(error, errorInfo) {
+    console.error("Application Render Error:", error, errorInfo);
+  }
+  
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-[#09090E] flex flex-col items-center justify-center p-6 text-center z-50 fixed inset-0">
+          <div className="bg-red-500/10 border border-red-500/20 p-8 rounded-[2rem] max-w-lg w-full backdrop-blur-xl shadow-2xl animate-fade-slide-up">
+            <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-6" />
+            <h2 className="text-2xl font-black text-white mb-2 tracking-tight">Application Crash Intercepted</h2>
+            <p className="text-slate-400 text-sm font-semibold mb-6">We caught an unexpected React render error. Check the stack trace below:</p>
+            
+            <div className="bg-[#1A1A24] p-5 rounded-2xl text-left overflow-auto no-scrollbar border border-red-500/10 mb-8 max-h-48">
+              <code className="text-[11px] text-red-400 font-mono font-bold leading-relaxed">
+                {this.state.error?.toString()}
+              </code>
+            </div>
+            
+            <button 
+              onClick={() => window.location.reload()} 
+              className="bg-red-500 hover:bg-red-600 text-white px-8 py-3.5 rounded-full font-bold text-sm transition-colors shadow-lg shadow-red-500/20 active:scale-95"
+            >
+              Reload Application
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // Helper parsers to seamlessly translate Supabase SQL Tables into our legacy JSON State format
 const mapDbToState = (data) => ({
   timestamp: data.timestamp ? parseInt(data.timestamp) * 1000 : Date.now(),
@@ -123,7 +167,13 @@ const DataProvider = ({ children, user }) => {
   const [activeClient, setActiveClient] = useState(user); 
   
   const [history, setHistory] = useState([]);
-  const [liveData, setLiveData] = useState(mapDbToState({}));
+  
+  // FIX: Ensured weather and mlDecision are initialized so the UI doesn't crash on load
+  const [liveData, setLiveData] = useState({
+    ...mapDbToState({}),
+    weather: { current: null, forecast: [], loading: true },
+    mlDecision: null
+  });
 
   useEffect(() => {
     if (user.role === 'admin') {
@@ -463,11 +513,13 @@ export default function App() {
             </div>
 
             <div className="relative z-10 flex-1 flex flex-col h-full w-full">
-              {!user ? <LoginPage /> : (
-                <DataProvider user={user}>
-                  <MainLayout />
-                </DataProvider>
-              )}
+              <ErrorBoundary>
+                {!user ? <LoginPage /> : (
+                  <DataProvider user={user}>
+                    <MainLayout />
+                  </DataProvider>
+                )}
+              </ErrorBoundary>
             </div>
           </div>
         </AuthContext.Provider>
