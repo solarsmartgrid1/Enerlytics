@@ -6,12 +6,13 @@ import {
   Sun, Moon, CloudRain, Cloud, Battery, Zap, Activity, Users, 
   Shield, Droplets, ArrowRightLeft, DollarSign,
   Cpu, AlertCircle, CheckCircle2, LogOut, Download, 
-  Plus, Trash2, Info, CloudLightning,
+  Trash2, Info, CloudLightning,
   Server, LayoutGrid, List, BrainCircuit, Clock, AlertTriangle,
   UserCog, MapPin, Phone, Edit2, Save, X
 } from 'lucide-react';
 
 // --- SUPABASE CONFIGURATION ---
+// Using ESM import to satisfy both Vercel/Vite bundlers and live preview environments
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const SUPABASE_URL = "https://aodfguenuwdpymkbwzwn.supabase.co";
@@ -33,7 +34,7 @@ const mapWmoToState = (code) => {
   return { id: 'SUNNY', name: 'Clear', icon: Sun, color: 'text-emerald-500' };
 };
 
-// --- MACHINE LEARNING & HYSTERESIS ENGINE ---
+// --- MACHINE LEARNING & HYSTERESIS ENGINE (UPDATED FOR 2-RELAY) ---
 const SolarMLPredictor = {
   predictEfficiency: (cloudCover, rainProb, maxTemp) => {
     let efficiency = 1.0; 
@@ -45,18 +46,18 @@ const SolarMLPredictor = {
 
   decideAction: (efficiencyPct, batteryPct) => {
     if (batteryPct < 40) {
-      return { strategy: "Import Mode (Low SoC)", batteryPolicy: "Priority Charging", relays: { r1: true, r2: false, r3: true }, color: "text-rose-500" };
+      return { strategy: "Import & Charge", batteryPolicy: "Priority Charging", relays: { r1: true, r2: false }, color: "text-rose-500" };
     }
     if (batteryPct >= 85) {
-      if (efficiencyPct > 50) return { strategy: "Aggressive Export", batteryPolicy: "Full / Discharging", relays: { r1: false, r2: true, r3: false }, color: "text-emerald-500" };
-      else return { strategy: "Weather Hoard Mode", batteryPolicy: "Hold Charge (Low Sun)", relays: { r1: true, r2: true, r3: false }, color: "text-amber-500" };
+      if (efficiencyPct > 50) return { strategy: "Aggressive Export", batteryPolicy: "Discharging / Export", relays: { r1: false, r2: true }, color: "text-emerald-500" };
+      else return { strategy: "Self-Sufficient", batteryPolicy: "Load on Battery", relays: { r1: true, r2: true }, color: "text-amber-500" };
     }
-    return { strategy: efficiencyPct > 70 ? "Balanced (High Yield)" : "Balanced Cycle", batteryPolicy: "Standard Operation", relays: { r1: true, r2: true, r3: false }, color: "text-blue-500" };
+    return { strategy: efficiencyPct > 70 ? "Self-Sufficient" : "Balanced Cycle", batteryPolicy: "Standard Operation", relays: { r1: true, r2: efficiencyPct > 70 }, color: "text-blue-500" };
   }
 };
 
 // ==========================================
-// 2. CONTEXTS
+// 2. CONTEXTS & ERROR BOUNDARY
 // ==========================================
 const AuthContext = createContext();
 const ThemeContext = createContext();
@@ -89,7 +90,6 @@ const ToastProvider = ({ children }) => {
   );
 };
 
-// --- GLOBAL ERROR BOUNDARY ---
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -133,14 +133,14 @@ class ErrorBoundary extends React.Component {
   }
 }
 
-// Helper parsers to seamlessly translate Supabase SQL Tables into our legacy JSON State format
+// Helper parsers to seamlessly translate Supabase SQL Tables into our JSON State format
 const mapDbToState = (data) => ({
   timestamp: data.timestamp ? parseInt(data.timestamp) * 1000 : Date.now(),
   solar: { power: data.solar_power ?? 0, voltage: data.solar_voltage ?? 0, current: data.solar_current ?? 0 },
   battery: { percentage: data.battery_percentage ?? 0, voltage: data.battery_voltage ?? 0, temp: data.battery_temp ?? 29 },
   load: { power: data.load_power ?? 0 },
   grid: { importExport: data.grid_import_export ?? 0 },
-  relays: { r1: data.relay_r1 ?? false, r2: data.relay_r2 ?? false, r3: data.relay_r3 ?? false, mode: data.relay_mode ?? 'auto' },
+  relays: { r1: data.relay_r1 ?? false, r2: data.relay_r2 ?? false, mode: data.relay_mode ?? 'auto' },
   billing: { imported: data.billing_imported ?? 0, exported: data.billing_exported ?? 0, lastReset: data.billing_last_reset ?? new Date().toISOString() }
 });
 
@@ -168,7 +168,6 @@ const DataProvider = ({ children, user }) => {
   
   const [history, setHistory] = useState([]);
   
-  // FIX: Ensured weather and mlDecision are initialized so the UI doesn't crash on load
   const [liveData, setLiveData] = useState({
     ...mapDbToState({}),
     weather: { current: null, forecast: [], loading: true },
@@ -235,16 +234,14 @@ const DataProvider = ({ children, user }) => {
         if (prev.relays.mode === 'auto') {
           const r1Changed = prev.relays.r1 !== decision.relays.r1;
           const r2Changed = prev.relays.r2 !== decision.relays.r2;
-          const r3Changed = prev.relays.r3 !== decision.relays.r3;
-          if (r1Changed || r2Changed || r3Changed) {
+          if (r1Changed || r2Changed) {
             updates.relays = { ...prev.relays, ...decision.relays };
             shouldUpdate = true;
             if (activeClient.dataType === 'real' && activeClient.espId) {
               supabase.from('devices').upsert({ 
                 id: activeClient.espId, 
                 relay_r1: decision.relays.r1, 
-                relay_r2: decision.relays.r2, 
-                relay_r3: decision.relays.r3 
+                relay_r2: decision.relays.r2 
               }).then();
             }
           }
@@ -282,7 +279,7 @@ const DataProvider = ({ children, user }) => {
         if(payload.new) setHistory(prev => [mapHistToState(payload.new), ...prev].slice(0, 3000));
       }).subscribe();
 
-    // 3. Simulator Engine
+    // 3. Simulator Engine (Updated for 2 Relays)
     if (activeClient.dataType === 'sim') {
       let tickCount = 0;
       let lastTime = Date.now();
@@ -300,15 +297,15 @@ const DataProvider = ({ children, user }) => {
           newBat = Math.max(0, Math.min(100, newBat)); 
           const newSolarP = Math.max(0, prev.solar.power + (Math.random() * 2 - 1));
           const newLoadP = Math.max(10, 20 + (Math.random() * 2 - 1));
-          const gridExp = newLoadP - newSolarP;
           
-          // Real-Time Simulator Billing Math
+          // 2-Relay Physics Simulation
+          const gridExp = (prev.relays.r2 ? 0 : newLoadP) - (prev.relays.r1 ? 0 : newSolarP);
+          
           const addedImport = gridExp > 0 ? (gridExp * deltaHours) / 1000.0 : 0;
           const addedExport = gridExp < 0 ? (Math.abs(gridExp) * deltaHours) / 1000.0 : 0;
           const newImportTotal = prev.billing.imported + addedImport;
           const newExportTotal = prev.billing.exported + addedExport;
 
-          // Push Live & Billing
           supabase.from('devices').upsert({
             id: deviceId, 
             timestamp: Math.floor(simTime / 1000), 
@@ -317,17 +314,16 @@ const DataProvider = ({ children, user }) => {
             solar_current: prev.solar.current,
             battery_percentage: newBat, 
             battery_voltage: prev.battery.voltage, 
+            battery_temp: prev.battery.temp,
             load_power: newLoadP,
             grid_import_export: gridExp, 
             billing_imported: newImportTotal, 
             billing_exported: newExportTotal,
             relay_r1: prev.relays.r1, 
             relay_r2: prev.relays.r2, 
-            relay_r3: prev.relays.r3, 
             relay_mode: prev.relays.mode
           }).then();
 
-          // Push History Every 3 Seconds (Every Loop)
           const timeMsStr = simTime.toString();
           supabase.from('history').insert({
             id: timeMsStr, 
@@ -342,7 +338,7 @@ const DataProvider = ({ children, user }) => {
 
           return { ...prev, timestamp: simTime, solar: { ...prev.solar, power: newSolarP }, battery: { ...prev.battery, percentage: newBat }, load: { ...prev.load, power: newLoadP }, grid: { ...prev.grid, importExport: gridExp }, billing: { imported: newImportTotal, exported: newExportTotal, lastReset: prev.billing.lastReset } };
         });
-      }, 3000); // 3 Second Loop
+      }, 3000); 
     }
 
     return () => {
@@ -366,8 +362,7 @@ const DataProvider = ({ children, user }) => {
           await supabase.from('devices').upsert({ 
             id: activeClient.espId, 
             relay_r1: newRelays.r1, 
-            relay_r2: newRelays.r2, 
-            relay_r3: newRelays.r3 
+            relay_r2: newRelays.r2 
           }); 
         } 
         catch (e) { console.error("Hardware sync issue"); }
@@ -1001,7 +996,7 @@ const DashboardPage = () => {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         <KpiCard title="PV Array Output" value={`${liveData.solar.power.toFixed(1)} W`} sub={`${liveData.solar.voltage.toFixed(1)}V / ${liveData.solar.current.toFixed(1)}A`} icon={<Sun />} color="emerald" />
-        <KpiCard title="Battery Storage" value={`${liveData.battery.percentage}%`} sub={`${liveData.battery.voltage.toFixed(1)}V • ${liveData.battery.temp}°C`} icon={<Battery />} color={liveData.battery.percentage > 20 ? "blue" : "red"} />
+        <KpiCard title="Battery Storage" value={`${liveData.battery.percentage}%`} sub={`${liveData.battery.voltage.toFixed(1)}V • ${liveData.battery.temp.toFixed(1)}°C`} icon={<Battery />} color={liveData.battery.percentage > 20 ? "blue" : "red"} />
         <KpiCard title="Site Load" value={`${liveData.load.power.toFixed(1)} W`} sub="Live Consumption" icon={<Activity />} color="slate" />
         <KpiCard title="Grid Exchange" value={`${Math.abs(liveData.grid.importExport).toFixed(1)} W`} sub={liveData.grid.importExport < 0 ? "Exporting" : "Importing"} icon={<ArrowRightLeft />} color={liveData.grid.importExport < 0 ? "emerald" : "orange"} />
       </div>
@@ -1070,15 +1065,15 @@ const DashboardPage = () => {
            
            <div className="grid grid-cols-2 gap-4 mt-6">
              <div className="bg-slate-50/80 dark:bg-[#1A1A24]/60 p-4 rounded-2xl border border-slate-200/50 dark:border-white/5 shadow-inner">
-               <div className="text-[9px] text-slate-500 uppercase font-extrabold tracking-widest mb-1.5">Battery Rule</div>
+               <div className="text-[9px] text-slate-500 uppercase font-extrabold tracking-widest mb-1.5">Solar Target</div>
                <div className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                 {liveData.mlDecision?.relays.r1 ? 'Charge Active' : 'Charge Bypass'}
+                 {liveData.mlDecision?.relays.r1 ? 'Battery' : 'Grid Exchange'}
                </div>
              </div>
              <div className="bg-slate-50/80 dark:bg-[#1A1A24]/60 p-4 rounded-2xl border border-slate-200/50 dark:border-white/5 shadow-inner">
-               <div className="text-[9px] text-slate-500 uppercase font-extrabold tracking-widest mb-1.5">Grid Policy</div>
+               <div className="text-[9px] text-slate-500 uppercase font-extrabold tracking-widest mb-1.5">Load Source</div>
                <div className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                 {liveData.mlDecision?.relays.r3 ? 'Importing' : 'Isolated'}
+                 {liveData.mlDecision?.relays.r2 ? 'Battery Inverter' : 'Grid Direct'}
                </div>
              </div>
            </div>
@@ -1169,18 +1164,9 @@ const RelayPage = () => {
     if(user.role !== 'admin') return addToast("Permission Denied: Read-Only for Clients", "error");
     if (liveData.relays.mode === 'auto') return addToast('System is in AUTO mode. Manual overrides disabled.', 'error');
     
+    // Toggle the selected relay. No software interlock required since the physical wiring handles it safely.
     const newRelays = { ...liveData.relays, [relay]: !liveData.relays[relay] };
-
-    // Strict Hardware Interlocks
-    if (relay === 'r2' && newRelays.r2) {
-        newRelays.r3 = false; 
-        addToast('Interlock Engaged: Grid Load cut off to permit Battery Load.', 'info');
-    } else if (relay === 'r3' && newRelays.r3) {
-        newRelays.r2 = false; 
-        addToast('Interlock Engaged: Battery Load cut off to permit Grid Load.', 'info');
-    }
-
-    api.updateMultipleRelays({ r1: newRelays.r1, r2: newRelays.r2, r3: newRelays.r3 });
+    api.updateMultipleRelays({ r1: newRelays.r1, r2: newRelays.r2 });
   };
 
   return (
@@ -1218,31 +1204,22 @@ const RelayPage = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <RelayControlCard 
           id="r1" 
-          title="Relay 1 (PV Route)" 
-          desc="Controls Solar PV destination. OFF (NC): Solar directed to Grid. ON (NO): Solar directed to Battery." 
+          title="Relay 1 (PV Routing)" 
+          desc="Controls Solar PV destination. NC: Solar sent to Grid/Load. NO: Solar sent to Battery." 
           state={liveData.relays.r1} 
           isAuto={liveData.relays.mode === 'auto' || user.role !== 'admin'} 
           onToggle={() => handleRelayToggle('r1')} 
-          warning
         />
         <RelayControlCard 
           id="r2" 
-          title="Relay 2 (Battery Load)" 
-          desc="Controls inverter output. OFF (NC): House disconnected from battery. ON (NO): House powered by Battery." 
+          title="Relay 2 (Load Source)" 
+          desc="Controls the power source for your load. NC: House powered by Grid. NO: House powered by Battery Inverter." 
           state={liveData.relays.r2} 
           isAuto={liveData.relays.mode === 'auto' || user.role !== 'admin'} 
           onToggle={() => handleRelayToggle('r2')} 
-        />
-        <RelayControlCard 
-          id="r3" 
-          title="Relay 3 (Grid Load)" 
-          desc="Controls Grid Power flow. OFF (NC): House disconnected from Grid. ON (NO): House powered directly by Grid." 
-          state={liveData.relays.r3} 
-          isAuto={liveData.relays.mode === 'auto' || user.role !== 'admin'} 
-          onToggle={() => handleRelayToggle('r3')} 
         />
       </div>
     </div>
