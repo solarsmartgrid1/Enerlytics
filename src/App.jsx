@@ -11,7 +11,6 @@ import {
   UserCog, MapPin, Phone, Edit2, Save, X
 } from 'lucide-react';
 
-// --- SUPABASE CONFIGURATION ---
 // Using ESM import to satisfy both Vercel/Vite bundlers and live preview environments
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -34,7 +33,8 @@ const mapWmoToState = (code) => {
   return { id: 'SUNNY', name: 'Clear', icon: Sun, color: 'text-emerald-500' };
 };
 
-// --- MACHINE LEARNING & HYSTERESIS ENGINE (UPDATED FOR 2-RELAY) ---
+// --- MACHINE LEARNING & HYSTERESIS ENGINE ---
+// REVISED LOGIC: R1(False/NC) = Battery, R1(True/NO) = Grid
 const SolarMLPredictor = {
   predictEfficiency: (cloudCover, rainProb, maxTemp) => {
     let efficiency = 1.0; 
@@ -46,13 +46,20 @@ const SolarMLPredictor = {
 
   decideAction: (efficiencyPct, batteryPct) => {
     if (batteryPct < 40) {
-      return { strategy: "Import & Charge", batteryPolicy: "Priority Charging", relays: { r1: true, r2: false }, color: "text-rose-500" };
+      // Prioritize Charging: Solar to Battery (NC -> false), Load from Grid (NC -> false)
+      return { strategy: "Import & Charge", batteryPolicy: "Priority Charging", relays: { r1: false, r2: false }, color: "text-rose-500" };
     }
     if (batteryPct >= 85) {
-      if (efficiencyPct > 50) return { strategy: "Aggressive Export", batteryPolicy: "Discharging / Export", relays: { r1: false, r2: true }, color: "text-emerald-500" };
-      else return { strategy: "Self-Sufficient", batteryPolicy: "Load on Battery", relays: { r1: true, r2: true }, color: "text-amber-500" };
+      if (efficiencyPct > 50) {
+        // High yield + Full battery: Solar to Grid (NO -> true), Load from Battery (NO -> true)
+        return { strategy: "Aggressive Export", batteryPolicy: "Discharging / Export", relays: { r1: true, r2: true }, color: "text-emerald-500" };
+      } else {
+        // Low yield + Full battery: Solar to Battery (NC -> false), Load from Battery (NO -> true)
+        return { strategy: "Self-Sufficient", batteryPolicy: "Load on Battery", relays: { r1: false, r2: true }, color: "text-amber-500" };
+      }
     }
-    return { strategy: efficiencyPct > 70 ? "Self-Sufficient" : "Balanced Cycle", batteryPolicy: "Standard Operation", relays: { r1: true, r2: efficiencyPct > 70 }, color: "text-blue-500" };
+    // Normal operation: Solar to Battery (NC -> false). If yield is high, load on Battery.
+    return { strategy: efficiencyPct > 70 ? "Self-Sufficient" : "Balanced Cycle", batteryPolicy: "Standard Operation", relays: { r1: false, r2: efficiencyPct > 70 }, color: "text-blue-500" };
   }
 };
 
@@ -133,7 +140,6 @@ class ErrorBoundary extends React.Component {
   }
 }
 
-// Helper parsers to seamlessly translate Supabase SQL Tables into our JSON State format
 const mapDbToState = (data) => ({
   timestamp: data.timestamp ? parseInt(data.timestamp) * 1000 : Date.now(),
   solar: { power: data.solar_power ?? 0, voltage: data.solar_voltage ?? 0, current: data.solar_current ?? 0 },
@@ -279,7 +285,7 @@ const DataProvider = ({ children, user }) => {
         if(payload.new) setHistory(prev => [mapHistToState(payload.new), ...prev].slice(0, 3000));
       }).subscribe();
 
-    // 3. Simulator Engine (Updated for 2 Relays)
+    // 3. Simulator Engine (Updated for fail-safe R1 logic)
     if (activeClient.dataType === 'sim') {
       let tickCount = 0;
       let lastTime = Date.now();
@@ -292,14 +298,17 @@ const DataProvider = ({ children, user }) => {
 
         setLiveData(prev => {
           let newBat = prev.battery.percentage;
-          if (prev.relays.r1) newBat += 0.8; 
-          if (prev.relays.r2) newBat -= 0.5; 
+          if (!prev.relays.r1) newBat += 0.8; // NC = Solar to Battery
+          if (prev.relays.r2) newBat -= 0.5;  // NO = Load from Battery
           newBat = Math.max(0, Math.min(100, newBat)); 
+          
           const newSolarP = Math.max(0, prev.solar.power + (Math.random() * 2 - 1));
           const newLoadP = Math.max(10, 20 + (Math.random() * 2 - 1));
           
-          // 2-Relay Physics Simulation
-          const gridExp = (prev.relays.r2 ? 0 : newLoadP) - (prev.relays.r1 ? 0 : newSolarP);
+          // Updated Physics Simulation:
+          // r2=false (NC) -> Load from Grid
+          // r1=true (NO) -> Solar to Grid
+          const gridExp = (prev.relays.r2 ? 0 : newLoadP) - (prev.relays.r1 ? newSolarP : 0);
           
           const addedImport = gridExp > 0 ? (gridExp * deltaHours) / 1000.0 : 0;
           const addedExport = gridExp < 0 ? (Math.abs(gridExp) * deltaHours) / 1000.0 : 0;
@@ -1067,7 +1076,7 @@ const DashboardPage = () => {
              <div className="bg-slate-50/80 dark:bg-[#1A1A24]/60 p-4 rounded-2xl border border-slate-200/50 dark:border-white/5 shadow-inner">
                <div className="text-[9px] text-slate-500 uppercase font-extrabold tracking-widest mb-1.5">Solar Target</div>
                <div className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                 {liveData.mlDecision?.relays.r1 ? 'Battery' : 'Grid Exchange'}
+                 {liveData.mlDecision?.relays.r1 ? 'Grid Exchange' : 'Battery'}
                </div>
              </div>
              <div className="bg-slate-50/80 dark:bg-[#1A1A24]/60 p-4 rounded-2xl border border-slate-200/50 dark:border-white/5 shadow-inner">
@@ -1208,7 +1217,7 @@ const RelayPage = () => {
         <RelayControlCard 
           id="r1" 
           title="Relay 1 (PV Routing)" 
-          desc="Controls Solar PV destination. NC: Solar sent to Grid/Load. NO: Solar sent to Battery." 
+          desc="Controls Solar PV destination. NC: Solar sent to Battery. NO: Solar sent to Grid." 
           state={liveData.relays.r1} 
           isAuto={liveData.relays.mode === 'auto' || user.role !== 'admin'} 
           onToggle={() => handleRelayToggle('r1')} 
