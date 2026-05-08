@@ -814,7 +814,7 @@ const MainLayout = () => {
         </div>
       </header>
 
-      <main className="flex-1 w-full max-w-7xl mx-auto p-4 sm:p-6 lg:p-8 pt-28 md:pt-32 pb-28 md:pb-24">
+      <main className="flex-1 w-full max-w-7xl mx-auto p-4 sm:p-6 lg:p-8 pt-28 md:pt-32 pb-36 md:pb-40">
         <div className="mb-8 flex flex-col sm:flex-row sm:items-end justify-between gap-4 animate-fade-slide-up">
            <div>
               <h1 className="text-3xl font-extrabold text-slate-900 dark:text-white capitalize tracking-tight">
@@ -895,7 +895,7 @@ const ProfilePage = () => {
   };
 
   return (
-    <div className="max-w-3xl mx-auto">
+    <div className="max-w-3xl mx-auto pb-10">
       <div className={`${modernCard}`}>
         <div className="p-8 border-b border-slate-200/50 dark:border-white/5 flex justify-between items-center bg-white/40 dark:bg-[#1A1A24]/40">
           <div className="flex items-center gap-4">
@@ -997,7 +997,7 @@ const DashboardPage = () => {
   const chartData = getOneHourChartData();
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-10">
       {isRealHardware && (
         <div className="bg-emerald-500/10 dark:bg-emerald-500/20 border border-emerald-500/20 p-4 rounded-2xl flex items-center gap-4 backdrop-blur-md shadow-sm">
           <Server className="text-emerald-600 dark:text-emerald-400 w-6 h-6 animate-pulse shrink-0" />
@@ -1158,7 +1158,7 @@ const WeatherPage = () => {
   );
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-10">
       <div className={`${modernCard} p-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 bg-white/40 dark:bg-[#12121A]/40`}>
          <div>
             <h2 className="text-xl font-extrabold mb-2 flex items-center gap-3 text-slate-900 dark:text-white tracking-tight">
@@ -1212,12 +1212,12 @@ const WeatherPage = () => {
       {/* --- SIMULATION SECTION --- */}
       <div className="mt-12 border-t border-slate-200/50 dark:border-white/5 pt-8">
         {!showSimulation ? (
-          <div className="flex justify-center">
+          <div className="flex justify-center pb-8">
             <button 
               onClick={() => setShowSimulation(true)}
-              className={`${modernButton} bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 border border-indigo-200/50 dark:border-indigo-800/50 hover:bg-indigo-100 dark:hover:bg-indigo-900/40`}
+              className={`flex items-center justify-center gap-2 px-5 py-2.5 rounded-full font-bold transition-all duration-300 ease-spring active:scale-95 shadow-md hover:shadow-lg bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 border border-indigo-200/50 dark:border-indigo-800/50 hover:bg-indigo-100 dark:hover:bg-indigo-900/40 text-xs`}
             >
-              <BrainCircuit className="w-5 h-5" /> Simulate Weather Scenarios
+              <BrainCircuit className="w-4 h-4" /> Simulate Weather Scenarios
             </button>
           </div>
         ) : (
@@ -1278,7 +1278,7 @@ const WeatherPage = () => {
             <div className="flex justify-center mb-8">
               <button 
                 onClick={runSimulation} 
-                className={`${modernButton} bg-indigo-500 hover:bg-indigo-600 text-white shadow-lg shadow-indigo-500/20 px-8 py-3.5 text-sm uppercase tracking-wide`}
+                className={`${modernButton} bg-indigo-500 hover:bg-indigo-600 text-white shadow-lg shadow-indigo-500/20 px-6 py-2.5 text-xs uppercase tracking-wide`}
               >
                 Run Simulation Engine
               </button>
@@ -1335,7 +1335,7 @@ const RelayPage = () => {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-10">
       <div className={`${modernCard} p-6 flex flex-col md:flex-row justify-between items-center gap-4 bg-white/40 dark:bg-[#12121A]/40`}>
         <div className="flex items-center gap-4">
            <div className="bg-slate-100 dark:bg-[#1A1A24] p-3 rounded-2xl shadow-inner">
@@ -1467,7 +1467,7 @@ const HistoryPage = () => {
   };
 
   return (
-    <div className={`${modernCard} overflow-hidden flex flex-col h-[calc(100vh-14rem)] bg-white/40 dark:bg-[#12121A]/40`}>
+    <div className={`${modernCard} overflow-hidden flex flex-col h-[calc(100vh-18rem)] bg-white/40 dark:bg-[#12121A]/40`}>
       <div className="p-5 border-b border-slate-200/50 dark:border-white/5 flex flex-col sm:flex-row justify-between items-center gap-4 bg-white/50 dark:bg-[#1A1A24]/50 backdrop-blur-md z-10">
         <div>
           <h2 className="text-lg font-extrabold text-slate-900 dark:text-white tracking-tight">Node Telemetry Logs</h2>
@@ -1542,7 +1542,7 @@ const BillingPage = () => {
   const netTotal = (liveData.billing.imported * TARIFF.BUY) - (liveData.billing.exported * TARIFF.SELL);
 
   return (
-    <div className="max-w-4xl space-y-6">
+    <div className="max-w-4xl space-y-6 pb-10">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
         <div className={`${modernCard} p-6 flex flex-col justify-center text-center items-center`}>
           <div className="bg-orange-100 dark:bg-orange-900/30 p-3 rounded-full mb-4 shadow-sm group-hover:scale-110 transition-transform duration-300 ease-spring">
@@ -1629,7 +1629,7 @@ const UsersPage = () => {
   const { clients, api } = useContext(DataContext);
 
   return (
-    <div className={`${modernCard} overflow-hidden`}>
+    <div className={`${modernCard} overflow-hidden mb-10`}>
       <div className="p-6 border-b border-slate-200/50 dark:border-white/5 flex justify-between items-center bg-white/40 dark:bg-[#1A1A24]/40">
         <div>
           <h2 className="text-xl font-extrabold text-slate-900 dark:text-white tracking-tight">Client Directory</h2>
