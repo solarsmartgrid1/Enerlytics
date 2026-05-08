@@ -34,7 +34,9 @@ const mapWmoToState = (code) => {
 };
 
 // --- MACHINE LEARNING & HYSTERESIS ENGINE ---
-// REVISED LOGIC: R1(False/NC) = Battery, R1(True/NO) = Grid
+// SWAPPED LOGIC:
+// R1 (Load Source): NC(false) = Grid, NO(true) = Battery
+// R2 (PV Route):    NC(false) = Battery, NO(true) = Grid
 const SolarMLPredictor = {
   predictEfficiency: (cloudCover, rainProb, maxTemp) => {
     let efficiency = 1.0; 
@@ -46,20 +48,20 @@ const SolarMLPredictor = {
 
   decideAction: (efficiencyPct, batteryPct) => {
     if (batteryPct < 40) {
-      // Prioritize Charging: Solar to Battery (NC -> false), Load from Grid (NC -> false)
+      // Prioritize Charging: Load from Grid (r1=false), Solar to Battery (r2=false)
       return { strategy: "Import & Charge", batteryPolicy: "Priority Charging", relays: { r1: false, r2: false }, color: "text-rose-500" };
     }
     if (batteryPct >= 85) {
       if (efficiencyPct > 50) {
-        // High yield + Full battery: Solar to Grid (NO -> true), Load from Battery (NO -> true)
+        // High yield + Full battery: Load from Battery (r1=true), Solar to Grid (r2=true)
         return { strategy: "Aggressive Export", batteryPolicy: "Discharging / Export", relays: { r1: true, r2: true }, color: "text-emerald-500" };
       } else {
-        // Low yield + Full battery: Solar to Battery (NC -> false), Load from Battery (NO -> true)
-        return { strategy: "Self-Sufficient", batteryPolicy: "Load on Battery", relays: { r1: false, r2: true }, color: "text-amber-500" };
+        // Low yield + Full battery: Load from Battery (r1=true), Solar to Battery (r2=false)
+        return { strategy: "Self-Sufficient", batteryPolicy: "Load on Battery", relays: { r1: true, r2: false }, color: "text-amber-500" };
       }
     }
-    // Normal operation: Solar to Battery (NC -> false). If yield is high, load on Battery.
-    return { strategy: efficiencyPct > 70 ? "Self-Sufficient" : "Balanced Cycle", batteryPolicy: "Standard Operation", relays: { r1: false, r2: efficiencyPct > 70 }, color: "text-blue-500" };
+    // Normal operation: Solar to Battery (r2=false). If yield is high, put load on Battery (r1=true).
+    return { strategy: efficiencyPct > 70 ? "Self-Sufficient" : "Balanced Cycle", batteryPolicy: "Standard Operation", relays: { r1: efficiencyPct > 70, r2: false }, color: "text-blue-500" };
   }
 };
 
@@ -285,7 +287,7 @@ const DataProvider = ({ children, user }) => {
         if(payload.new) setHistory(prev => [mapHistToState(payload.new), ...prev].slice(0, 3000));
       }).subscribe();
 
-    // 3. Simulator Engine (Updated for fail-safe R1 logic)
+    // 3. Simulator Engine (Updated for SWAPPED 2 Relays logic)
     if (activeClient.dataType === 'sim') {
       let tickCount = 0;
       let lastTime = Date.now();
@@ -298,17 +300,17 @@ const DataProvider = ({ children, user }) => {
 
         setLiveData(prev => {
           let newBat = prev.battery.percentage;
-          if (!prev.relays.r1) newBat += 0.8; // NC = Solar to Battery
-          if (prev.relays.r2) newBat -= 0.5;  // NO = Load from Battery
+          if (!prev.relays.r2) newBat += 0.8; // R2 NC = Solar to Battery
+          if (prev.relays.r1) newBat -= 0.5;  // R1 NO = Load from Battery
           newBat = Math.max(0, Math.min(100, newBat)); 
           
           const newSolarP = Math.max(0, prev.solar.power + (Math.random() * 2 - 1));
           const newLoadP = Math.max(10, 20 + (Math.random() * 2 - 1));
           
-          // Updated Physics Simulation:
-          // r2=false (NC) -> Load from Grid
-          // r1=true (NO) -> Solar to Grid
-          const gridExp = (prev.relays.r2 ? 0 : newLoadP) - (prev.relays.r1 ? newSolarP : 0);
+          // Simulator SWAPPED Math:
+          // R1 (Load): true(NO) = Battery, false(NC) = Grid
+          // R2 (PV)  : true(NO) = Grid, false(NC) = Battery
+          const gridExp = (prev.relays.r1 ? 0 : newLoadP) - (prev.relays.r2 ? newSolarP : 0);
           
           const addedImport = gridExp > 0 ? (gridExp * deltaHours) / 1000.0 : 0;
           const addedExport = gridExp < 0 ? (Math.abs(gridExp) * deltaHours) / 1000.0 : 0;
@@ -1074,15 +1076,15 @@ const DashboardPage = () => {
            
            <div className="grid grid-cols-2 gap-4 mt-6">
              <div className="bg-slate-50/80 dark:bg-[#1A1A24]/60 p-4 rounded-2xl border border-slate-200/50 dark:border-white/5 shadow-inner">
-               <div className="text-[9px] text-slate-500 uppercase font-extrabold tracking-widest mb-1.5">Solar Target</div>
+               <div className="text-[9px] text-slate-500 uppercase font-extrabold tracking-widest mb-1.5">Load Source</div>
                <div className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                 {liveData.mlDecision?.relays.r1 ? 'Grid Exchange' : 'Battery'}
+                 {liveData.mlDecision?.relays.r1 ? 'Battery Inverter' : 'Grid Direct'}
                </div>
              </div>
              <div className="bg-slate-50/80 dark:bg-[#1A1A24]/60 p-4 rounded-2xl border border-slate-200/50 dark:border-white/5 shadow-inner">
-               <div className="text-[9px] text-slate-500 uppercase font-extrabold tracking-widest mb-1.5">Load Source</div>
+               <div className="text-[9px] text-slate-500 uppercase font-extrabold tracking-widest mb-1.5">Solar Target</div>
                <div className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                 {liveData.mlDecision?.relays.r2 ? 'Battery Inverter' : 'Grid Direct'}
+                 {liveData.mlDecision?.relays.r2 ? 'Grid Exchange' : 'Battery'}
                </div>
              </div>
            </div>
@@ -1173,7 +1175,6 @@ const RelayPage = () => {
     if(user.role !== 'admin') return addToast("Permission Denied: Read-Only for Clients", "error");
     if (liveData.relays.mode === 'auto') return addToast('System is in AUTO mode. Manual overrides disabled.', 'error');
     
-    // Toggle the selected relay. No software interlock required since the physical wiring handles it safely.
     const newRelays = { ...liveData.relays, [relay]: !liveData.relays[relay] };
     api.updateMultipleRelays({ r1: newRelays.r1, r2: newRelays.r2 });
   };
@@ -1216,16 +1217,17 @@ const RelayPage = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <RelayControlCard 
           id="r1" 
-          title="Relay 1 (PV Routing)" 
-          desc="Controls Solar PV destination. NC: Solar sent to Battery. NO: Solar sent to Grid." 
+          title="Relay 1 (Load Source)" 
+          desc="Controls the power source for your load. NC: House powered by Grid. NO: House powered by Battery Inverter." 
           state={liveData.relays.r1} 
           isAuto={liveData.relays.mode === 'auto' || user.role !== 'admin'} 
           onToggle={() => handleRelayToggle('r1')} 
+          warning 
         />
         <RelayControlCard 
           id="r2" 
-          title="Relay 2 (Load Source)" 
-          desc="Controls the power source for your load. NC: House powered by Grid. NO: House powered by Battery Inverter." 
+          title="Relay 2 (PV Routing)" 
+          desc="Controls Solar PV destination. NC: Solar sent to Battery. NO: Solar sent to Grid." 
           state={liveData.relays.r2} 
           isAuto={liveData.relays.mode === 'auto' || user.role !== 'admin'} 
           onToggle={() => handleRelayToggle('r2')} 
