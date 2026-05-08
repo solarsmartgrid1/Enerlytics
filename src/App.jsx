@@ -149,7 +149,7 @@ const mapDbToState = (data) => ({
   load: { power: data.load_power ?? 0 },
   grid: { importExport: data.grid_import_export ?? 0 },
   relays: { r1: data.relay_r1 ?? false, r2: data.relay_r2 ?? false, mode: data.relay_mode ?? 'auto' },
-  billing: { imported: data.billing_imported ?? 0, exported: data.billing_exported ?? 0, lastReset: data.billing_last_reset ?? new Date().toISOString() }
+  billing: { imported: data.billing_imported ?? 0, exported: data.billing_exported ?? 0, lastReset: data.billing_last_reset ?? new DatetoISOString() }
 });
 
 const mapHistToState = (raw) => {
@@ -1094,8 +1094,61 @@ const DashboardPage = () => {
   );
 };
 
+// --- SIMULATION CARD SUB-COMPONENT ---
+const SimulationResultCard = ({ title, decision }) => (
+  <div className="bg-white/50 dark:bg-[#1A1A24]/60 p-6 rounded-[1.5rem] border border-slate-200/50 dark:border-white/5 shadow-sm flex flex-col justify-between">
+    <div>
+      <div className="text-[11px] font-extrabold uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-4">{title}</div>
+      <div className="text-xl font-black text-slate-900 dark:text-white mb-2 tracking-tight">{decision.strategy}</div>
+      <div className={`text-[10px] font-extrabold tracking-wide uppercase px-3 py-1 rounded-full inline-block border shadow-sm mb-6 ${decision.color} bg-slate-100 dark:bg-[#2A2A35] border-slate-200 dark:border-slate-700`}>
+        {decision.batteryPolicy}
+      </div>
+    </div>
+    
+    <div className="space-y-3 pt-4 border-t border-slate-200/50 dark:border-white/5">
+      <div className="flex justify-between items-center">
+        <span className="text-xs font-bold text-slate-500 dark:text-slate-400">Load Source</span>
+        <span className="text-xs font-black text-slate-800 dark:text-slate-200">
+          {decision.relays.r1 ? 'Battery Inverter' : 'Grid Direct'}
+        </span>
+      </div>
+      <div className="flex justify-between items-center">
+        <span className="text-xs font-bold text-slate-500 dark:text-slate-400">Solar Target</span>
+        <span className="text-xs font-black text-slate-800 dark:text-slate-200">
+          {decision.relays.r2 ? 'Grid Exchange' : 'Battery'}
+        </span>
+      </div>
+    </div>
+  </div>
+);
+
 const WeatherPage = () => {
   const { liveData } = useContext(DataContext);
+
+  // Simulation State
+  const [showSimulation, setShowSimulation] = useState(false);
+  const [simCloudCover, setSimCloudCover] = useState(20);
+  const [simRainProb, setSimRainProb] = useState(10);
+  const [simMaxTemp, setSimMaxTemp] = useState(28);
+  const [simResults, setSimResults] = useState(null);
+
+  const runSimulation = () => {
+    const effRatio = SolarMLPredictor.predictEfficiency(simCloudCover, simRainProb, simMaxTemp);
+    const effPct = Math.round(effRatio * 100);
+
+    const decisionLow = SolarMLPredictor.decideAction(effPct, 30);
+    const decisionNormal = SolarMLPredictor.decideAction(effPct, 60);
+    const decisionHigh = SolarMLPredictor.decideAction(effPct, 90);
+
+    setSimResults({
+      efficiency: effPct,
+      decisions: {
+        low: decisionLow,
+        normal: decisionNormal,
+        high: decisionHigh
+      }
+    });
+  };
 
   if (liveData.weather.loading) return (
     <div className="flex flex-col items-center justify-center p-20 gap-4">
@@ -1155,6 +1208,107 @@ const WeatherPage = () => {
           </div>
         ))}
       </div>
+
+      {/* --- SIMULATION SECTION --- */}
+      <div className="mt-12 border-t border-slate-200/50 dark:border-white/5 pt-8">
+        {!showSimulation ? (
+          <div className="flex justify-center">
+            <button 
+              onClick={() => setShowSimulation(true)}
+              className={`${modernButton} bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 border border-indigo-200/50 dark:border-indigo-800/50 hover:bg-indigo-100 dark:hover:bg-indigo-900/40`}
+            >
+              <BrainCircuit className="w-5 h-5" /> Simulate Weather Scenarios
+            </button>
+          </div>
+        ) : (
+          <div className={`${modernCard} p-8 animate-fade-slide-up bg-white/40 dark:bg-[#12121A]/40`}>
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-extrabold flex items-center gap-3 text-slate-900 dark:text-white">
+                <div className="bg-indigo-100 dark:bg-indigo-900/30 p-2 rounded-xl text-indigo-600 dark:text-indigo-400">
+                  <BrainCircuit className="w-5 h-5" />
+                </div>
+                AI Weather Decision Sandbox
+              </h2>
+              <button onClick={() => setShowSimulation(false)} className="text-slate-400 hover:text-red-500 transition-colors p-2 rounded-full hover:bg-red-50 dark:hover:bg-red-900/20">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8 bg-white/50 dark:bg-[#1A1A24]/60 p-6 rounded-3xl border border-slate-200/50 dark:border-white/5 shadow-inner">
+              <div className="space-y-4">
+                <label className="flex justify-between text-xs font-extrabold text-slate-500 uppercase tracking-widest">
+                  <span className="flex items-center gap-1.5"><Cloud className="w-4 h-4"/> Cloud Cover</span>
+                  <span className="text-indigo-500">{simCloudCover}%</span>
+                </label>
+                <input 
+                  type="range" min="0" max="100" 
+                  value={simCloudCover} 
+                  onChange={(e)=>setSimCloudCover(Number(e.target.value))} 
+                  className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500" 
+                />
+              </div>
+
+              <div className="space-y-4">
+                <label className="flex justify-between text-xs font-extrabold text-slate-500 uppercase tracking-widest">
+                  <span className="flex items-center gap-1.5"><Droplets className="w-4 h-4 text-blue-500"/> Precipitation Prob.</span>
+                  <span className="text-indigo-500">{simRainProb}%</span>
+                </label>
+                <input 
+                  type="range" min="0" max="100" 
+                  value={simRainProb} 
+                  onChange={(e)=>setSimRainProb(Number(e.target.value))} 
+                  className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500" 
+                />
+              </div>
+
+              <div className="space-y-4">
+                <label className="flex justify-between text-xs font-extrabold text-slate-500 uppercase tracking-widest">
+                  <span className="flex items-center gap-1.5"><Sun className="w-4 h-4 text-amber-500"/> Max Temp</span>
+                  <span className="text-indigo-500">{simMaxTemp}°C</span>
+                </label>
+                <input 
+                  type="range" min="10" max="50" 
+                  value={simMaxTemp} 
+                  onChange={(e)=>setSimMaxTemp(Number(e.target.value))} 
+                  className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500" 
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-center mb-8">
+              <button 
+                onClick={runSimulation} 
+                className={`${modernButton} bg-indigo-500 hover:bg-indigo-600 text-white shadow-lg shadow-indigo-500/20 px-8 py-3.5 text-sm uppercase tracking-wide`}
+              >
+                Run Simulation Engine
+              </button>
+            </div>
+
+            {simResults && (
+              <div className="animate-fade-slide-up border-t border-slate-200/50 dark:border-white/5 pt-8">
+                <div className="text-center mb-10">
+                  <div className="text-[10px] uppercase font-extrabold tracking-widest text-slate-500 dark:text-slate-400 mb-2">Calculated Generation Efficiency</div>
+                  <div className={`text-6xl font-black tracking-tight ${simResults.efficiency > 70 ? 'text-emerald-500' : simResults.efficiency > 40 ? 'text-orange-500' : 'text-rose-500'}`}>
+                    {simResults.efficiency}%
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-center gap-3 mb-6">
+                   <div className="h-px bg-slate-200 dark:bg-[#2A2A35] flex-1"></div>
+                   <h3 className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400 dark:text-slate-500 px-4">Predicted Actions By Battery State</h3>
+                   <div className="h-px bg-slate-200 dark:bg-[#2A2A35] flex-1"></div>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <SimulationResultCard title="Low SOC (< 40%)" decision={simResults.decisions.low} />
+                  <SimulationResultCard title="Normal SOC (40% - 84%)" decision={simResults.decisions.normal} />
+                  <SimulationResultCard title="High SOC (≥ 85%)" decision={simResults.decisions.high} />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 };
@@ -1175,6 +1329,7 @@ const RelayPage = () => {
     if(user.role !== 'admin') return addToast("Permission Denied: Read-Only for Clients", "error");
     if (liveData.relays.mode === 'auto') return addToast('System is in AUTO mode. Manual overrides disabled.', 'error');
     
+    // Toggle the selected relay. No software interlock required since the physical wiring handles it safely.
     const newRelays = { ...liveData.relays, [relay]: !liveData.relays[relay] };
     api.updateMultipleRelays({ r1: newRelays.r1, r2: newRelays.r2 });
   };
