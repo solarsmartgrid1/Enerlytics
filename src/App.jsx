@@ -149,7 +149,7 @@ const mapDbToState = (data) => ({
   load: { power: data.load_power ?? 0 },
   grid: { importExport: data.grid_import_export ?? 0 },
   relays: { r1: data.relay_r1 ?? false, r2: data.relay_r2 ?? false, mode: data.relay_mode ?? 'auto' },
-  billing: { imported: data.billing_imported ?? 0, exported: data.billing_exported ?? 0, lastReset: data.billing_last_reset ?? new DatetoISOString() }
+  billing: { imported: data.billing_imported ?? 0, exported: data.billing_exported ?? 0, lastReset: data.billing_last_reset ?? new Date().toISOString() }
 });
 
 const mapHistToState = (raw) => {
