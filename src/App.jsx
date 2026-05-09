@@ -814,7 +814,8 @@ const MainLayout = () => {
         </div>
       </header>
 
-      <main className="flex-1 w-full max-w-7xl mx-auto p-4 sm:p-6 lg:p-8 pt-28 md:pt-32 pb-36 md:pb-40">
+      {/* FIXED: pt-40 sm:pt-36 lg:pt-32 ensures content perfectly starts below the header edge without overlap */}
+      <main className="flex-1 w-full max-w-7xl mx-auto p-4 sm:p-6 lg:p-8 pt-40 sm:pt-36 lg:pt-32 pb-36 md:pb-40">
         <div className="mb-8 flex flex-col sm:flex-row sm:items-end justify-between gap-4 animate-fade-slide-up">
            <div>
               <h1 className="text-3xl font-extrabold text-slate-900 dark:text-white capitalize tracking-tight">
@@ -844,7 +845,7 @@ const MainLayout = () => {
             </p>
           </div>
           <div className="text-[11px] font-bold text-slate-600 dark:text-slate-300 bg-white/50 dark:bg-[#1A1A24]/60 px-5 py-2.5 rounded-full border border-white/60 dark:border-white/10 shadow-sm backdrop-blur-md transition-all hover:shadow-md">
-            Designed & Developed by <span className="text-emerald-600 dark:text-emerald-400">Arya and Team, RVCE</span>
+            Designed & Developed as a part of <span className="text-emerald-600 dark:text-emerald-400">Final Year Project at RVCE</span>
           </div>
         </div>
       </footer>
@@ -1467,7 +1468,7 @@ const HistoryPage = () => {
   };
 
   return (
-    <div className={`${modernCard} overflow-hidden flex flex-col h-[calc(100vh-18rem)] bg-white/40 dark:bg-[#12121A]/40`}>
+    <div className={`${modernCard} overflow-hidden flex flex-col h-[calc(100vh-20rem)] bg-white/40 dark:bg-[#12121A]/40 mb-10`}>
       <div className="p-5 border-b border-slate-200/50 dark:border-white/5 flex flex-col sm:flex-row justify-between items-center gap-4 bg-white/50 dark:bg-[#1A1A24]/50 backdrop-blur-md z-10">
         <div>
           <h2 className="text-lg font-extrabold text-slate-900 dark:text-white tracking-tight">Node Telemetry Logs</h2>
