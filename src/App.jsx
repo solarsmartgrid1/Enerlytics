@@ -340,6 +340,22 @@ const DataProvider = ({ children, user }) => {
     }
   }, [liveData.battery.percentage, liveData.relays.mode, liveData.weather?.current, liveData.grid.active, activeClient]);
 
+  // =====================================================================
+  // ANTI-ISLANDING WATCHER: Instantly cuts R2 if Grid Drops
+  // =====================================================================
+  useEffect(() => {
+    if (!liveData.grid.active && liveData.relays.r2) {
+      if (activeClient?.dataType === 'real' && activeClient?.espId) {
+        supabase.from('devices').upsert({ 
+          id: activeClient.espId, 
+          relay_r2: false 
+        }).then();
+      }
+      setLiveData(prev => ({ ...prev, relays: { ...prev.relays, r2: false } }));
+      addToast('ANTI-ISLANDING: R2 forcefully disengaged due to grid drop.', 'error');
+    }
+  }, [liveData.grid.active, liveData.relays.r2, activeClient]);
+
   // SUPABASE REAL-TIME SYNC ENGINE
   useEffect(() => {
     let simInterval = null;
@@ -853,7 +869,7 @@ const MainLayout = () => {
 
   return (
     <>
-      <header className="fixed top-0 w-full z-50 bg-white/70 dark:bg-[#0a0a0f]/70 backdrop-blur-2xl border-b border-white/50 dark:border-white/5 shadow-sm transition-colors duration-500">
+      <header className="fixed top-0 w-full z-50 bg-white/70 dark:bg-[#0a0a0f]/70 backdrop-blur-2xl border-b border-slate-200/50 dark:border-white/5 shadow-sm transition-colors duration-500">
         <div className="w-full px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between py-2 sm:py-0 sm:h-20 gap-3 sm:gap-0">
             
@@ -866,10 +882,10 @@ const MainLayout = () => {
               </button>
 
               <div className="flex sm:hidden items-center gap-2">
-                 <button onClick={toggleTheme} className="p-2.5 text-slate-500 bg-white/50 dark:bg-[#1A1A24]/50 border border-white/60 dark:border-white/10 rounded-full backdrop-blur-md shadow-sm active:scale-95 transition-all outline-none">
+                 <button onClick={toggleTheme} className="p-2.5 text-slate-500 bg-white/50 dark:bg-[#1A1A24]/50 border border-slate-200/50 dark:border-white/10 rounded-full backdrop-blur-md shadow-sm active:scale-95 transition-all outline-none">
                   {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
                 </button>
-                <button onClick={handleLogout} className="p-2.5 text-red-500 bg-white/50 dark:bg-[#1A1A24]/50 border border-white/60 dark:border-white/10 rounded-full backdrop-blur-md shadow-sm active:scale-95 transition-all outline-none">
+                <button onClick={handleLogout} className="p-2.5 text-red-500 bg-white/50 dark:bg-[#1A1A24]/50 border border-slate-200/50 dark:border-white/10 rounded-full backdrop-blur-md shadow-sm active:scale-95 transition-all outline-none">
                   <LogOut className="w-4 h-4" />
                 </button>
               </div>
@@ -904,7 +920,7 @@ const MainLayout = () => {
 
             <div className="hidden sm:flex items-center gap-4 pl-6 shrink-0 h-full">
               {user.role === 'admin' && clients.length > 0 && (
-                <div className="flex items-center gap-2 bg-white/50 dark:bg-[#1A1A24]/60 border border-white/60 dark:border-white/10 px-3 py-2 rounded-2xl shadow-sm backdrop-blur-md">
+                <div className="flex items-center gap-2 bg-white/50 dark:bg-[#1A1A24]/60 border border-slate-200/50 dark:border-white/10 px-3 py-2 rounded-2xl shadow-sm backdrop-blur-md">
                   <Users className="w-4 h-4 text-emerald-500" />
                   <select value={activeClient?.uid || ''} onChange={(e) => setActiveClientId(e.target.value)} className="bg-transparent text-sm font-bold outline-none cursor-pointer text-slate-700 dark:text-slate-200 appearance-none pr-4">
                     {clients.map(c => <option key={c.uid} value={c.uid} className="dark:bg-[#1A1A24]">{c.name}</option>)}
@@ -915,10 +931,10 @@ const MainLayout = () => {
               {activeClient && <LiveStatusBadge timestamp={liveData.timestamp} />}
               
               <div className="flex items-center gap-2 border-l border-slate-200/50 dark:border-[#2A2A35]/50 pl-4 h-8">
-                <button onClick={toggleTheme} className="p-2.5 text-slate-500 bg-slate-100/50 dark:bg-[#1A1A24]/50 border border-white/60 dark:border-white/5 rounded-full hover:shadow-md active:scale-95 transition-all outline-none group">
+                <button onClick={toggleTheme} className="p-2.5 text-slate-500 bg-slate-100/50 dark:bg-[#1A1A24]/50 border border-slate-200/50 dark:border-white/5 rounded-full hover:shadow-md active:scale-95 transition-all outline-none group">
                   {theme === 'dark' ? <Sun className="w-4 h-4 group-hover:rotate-45 transition-transform duration-500" /> : <Moon className="w-4 h-4 group-hover:-rotate-12 transition-transform duration-500" />}
                 </button>
-                <button onClick={() => setCurrentPage('profile')} className="px-3.5 py-2 text-sm font-bold text-slate-700 dark:text-slate-200 bg-slate-100/50 dark:bg-[#1A1A24]/50 border border-white/60 dark:border-white/5 rounded-full hover:shadow-md hover:text-emerald-600 dark:hover:text-emerald-400 active:scale-95 transition-all outline-none">
+                <button onClick={() => setCurrentPage('profile')} className="px-3.5 py-2 text-sm font-bold text-slate-700 dark:text-slate-200 bg-slate-100/50 dark:bg-[#1A1A24]/50 border border-slate-200/50 dark:border-white/5 rounded-full hover:shadow-md hover:text-emerald-600 dark:hover:text-emerald-400 active:scale-95 transition-all outline-none">
                   {user.name.split(' ')[0]}
                 </button>
                 <button onClick={handleLogout} className="p-2.5 text-red-500 bg-red-50/50 dark:bg-red-500/10 border border-red-100/50 dark:border-red-500/20 rounded-full hover:bg-red-100 dark:hover:bg-red-500/20 hover:shadow-md active:scale-95 transition-all outline-none" title="Logout">
@@ -1120,7 +1136,7 @@ const DashboardPage = () => {
   const chartData = getOneHourChartData();
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-10">
       
       {/* ANTI ISLANDING WARNING BANNER */}
       {!liveData.grid.active && (
@@ -1293,7 +1309,7 @@ const WeatherPage = () => {
   );
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-10">
       <div className={`${modernCard} p-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 bg-white/40 dark:bg-[#12121A]/40`}>
          <div>
             <h2 className="text-xl font-extrabold mb-2 flex items-center gap-3 text-slate-900 dark:text-white tracking-tight">
@@ -1464,7 +1480,11 @@ const RelayPage = () => {
     if(user.role !== 'admin') return addToast("Permission Denied: Read-Only for Clients", "error");
     if (liveData.relays.mode === 'auto') return addToast('System is in AUTO mode. Manual overrides disabled.', 'error');
     
-    // Toggle the selected relay. No software interlock required since the physical wiring handles it safely.
+    // NEW ANTI-ISLANDING CHECK
+    if (relay === 'r2' && !liveData.grid.active && !liveData.relays.r2) {
+       return addToast('GRID IS DOWN: R2 cannot be switched to Grid. Anti-Islanding is active.', 'error');
+    }
+
     const newRelays = { ...liveData.relays, [relay]: !liveData.relays[relay] };
     api.updateMultipleRelays({ r1: newRelays.r1, r2: newRelays.r2 });
   };
@@ -1512,15 +1532,16 @@ const RelayPage = () => {
           state={liveData.relays.r1} 
           isAuto={liveData.relays.mode === 'auto' || user.role !== 'admin'} 
           onToggle={() => handleRelayToggle('r1')} 
-          warning 
         />
         <RelayControlCard 
           id="r2" 
           title="Relay 2 (PV Routing)" 
           desc="Controls Solar PV destination. NC: Solar sent to Battery. NO: Solar sent to Grid." 
           state={liveData.relays.r2} 
-          isAuto={liveData.relays.mode === 'auto' || user.role !== 'admin'} 
+          isAuto={liveData.relays.mode === 'auto' || user.role !== 'admin' || !liveData.grid.active} 
           onToggle={() => handleRelayToggle('r2')} 
+          warning={!liveData.grid.active}
+          warningMsg={!liveData.grid.active ? "LOCKED: Grid Offline" : null}
         />
       </div>
     </div>
@@ -1532,7 +1553,7 @@ const HistoryPage = () => {
   const { addToast } = useContext(ToastContext);
   const [filter, setFilter] = useState('1h');
 
-  // Aggregation Logic - updated for 3-second data density
+  // Aggregation Logic
   const getGroupedHistory = (hist, filterType) => {
     let cutoff = Date.now();
     let bucketSizeMs = 3000; 
@@ -1843,14 +1864,15 @@ const KpiCard = ({ title, value, sub, icon, color }) => {
   );
 };
 
-const RelayControlCard = ({ title, desc, state, isAuto, onToggle, warning }) => (
+const RelayControlCard = ({ title, desc, state, isAuto, onToggle, warning, warningMsg }) => (
   <div className={`${modernCard} p-6 flex flex-col justify-between min-h-[220px] ${state ? 'ring-2 ring-emerald-500/50 bg-emerald-50/30 dark:bg-emerald-900/10' : ''}`}>
     <div>
       <div className="flex justify-between items-center mb-4 border-b border-slate-200/50 dark:border-white/5 pb-4">
         <h4 className="font-extrabold text-[15px] text-slate-900 dark:text-white flex items-center gap-2 tracking-tight group-hover:translate-x-1 transition-transform duration-300">
           {title} 
-          {warning && <AlertTriangle className="w-4 h-4 text-amber-500 drop-shadow-sm" title="Safety interlocks apply" />}
+          {warning && <AlertTriangle className="w-4 h-4 text-red-500 drop-shadow-sm animate-pulse" title={warningMsg || "Safety interlocks apply"} />}
         </h4>
+        {warningMsg && <span className="text-[10px] font-bold tracking-widest uppercase bg-red-500/10 text-red-500 px-2 py-1 rounded-md">{warningMsg}</span>}
       </div>
       <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 leading-relaxed mb-6">{desc}</p>
     </div>
