@@ -104,15 +104,8 @@ class ErrorBoundary extends React.Component {
     super(props);
     this.state = { hasError: false, error: null };
   }
-  
-  static getDerivedStateFromError(error) {
-    return { hasError: true, error };
-  }
-  
-  componentDidCatch(error, errorInfo) {
-    console.error("Application Render Error:", error, errorInfo);
-  }
-  
+  static getDerivedStateFromError(error) { return { hasError: true, error }; }
+  componentDidCatch(error, errorInfo) { console.error("Application Render Error:", error, errorInfo); }
   render() {
     if (this.state.hasError) {
       return (
@@ -121,19 +114,10 @@ class ErrorBoundary extends React.Component {
             <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-6" />
             <h2 className="text-2xl font-black text-white mb-2 tracking-tight">Application Crash Intercepted</h2>
             <p className="text-slate-400 text-sm font-semibold mb-6">We caught an unexpected React render error. Check the stack trace below:</p>
-            
             <div className="bg-[#1A1A24] p-5 rounded-2xl text-left overflow-auto no-scrollbar border border-red-500/10 mb-8 max-h-48">
-              <code className="text-[11px] text-red-400 font-mono font-bold leading-relaxed">
-                {this.state.error?.toString()}
-              </code>
+              <code className="text-[11px] text-red-400 font-mono font-bold leading-relaxed">{this.state.error?.toString()}</code>
             </div>
-            
-            <button 
-              onClick={() => window.location.reload()} 
-              className="bg-red-500 hover:bg-red-600 text-white px-8 py-3.5 rounded-full font-bold text-sm transition-colors shadow-lg shadow-red-500/20 active:scale-95"
-            >
-              Reload Application
-            </button>
+            <button onClick={() => window.location.reload()} className="bg-red-500 hover:bg-red-600 text-white px-8 py-3.5 rounded-full font-bold text-sm transition-colors shadow-lg shadow-red-500/20 active:scale-95">Reload Application</button>
           </div>
         </div>
       );
@@ -170,17 +154,10 @@ const mapHistToState = (raw) => {
 
 const DataProvider = ({ children, user }) => {
   const { addToast } = useContext(ToastContext);
-  
   const [clients, setClients] = useState([]);
   const [activeClient, setActiveClient] = useState(user); 
-  
   const [history, setHistory] = useState([]);
-  
-  const [liveData, setLiveData] = useState({
-    ...mapDbToState({}),
-    weather: { current: null, forecast: [], loading: true },
-    mlDecision: null
-  });
+  const [liveData, setLiveData] = useState({ ...mapDbToState({}), weather: { current: null, forecast: [], loading: true }, mlDecision: null });
 
   useEffect(() => {
     if (user.role === 'admin') {
@@ -198,10 +175,7 @@ const DataProvider = ({ children, user }) => {
 
   const handleClientChange = (uid) => {
     const selected = clients.find(c => c.uid === uid);
-    if (selected) {
-      setActiveClient(selected);
-      setHistory([]); 
-    }
+    if (selected) { setActiveClient(selected); setHistory([]); }
   };
 
   useEffect(() => {
@@ -209,22 +183,13 @@ const DataProvider = ({ children, user }) => {
       try {
         const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=12.9716&longitude=77.5946&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_max,cloudcover_mean&timezone=Asia%2FKolkata');
         const data = await res.json();
-        
         const forecast = data.daily.time.map((time, index) => {
           const wmoState = mapWmoToState(data.daily.weathercode[index]);
           const effRatio = SolarMLPredictor.predictEfficiency(data.daily.cloudcover_mean[index], data.daily.precipitation_probability_max[index], data.daily.temperature_2m_max[index]);
-          return {
-            date: new Date(time).toLocaleDateString('en-IN', { weekday: 'short', month: 'short', day: 'numeric' }),
-            maxTemp: data.daily.temperature_2m_max[index], minTemp: data.daily.temperature_2m_min[index],
-            rainProb: data.daily.precipitation_probability_max[index], cloudCover: data.daily.cloudcover_mean[index],
-            efficiencyPct: Math.round(effRatio * 100),
-            ...wmoState
-          };
+          return { date: new Date(time).toLocaleDateString('en-IN', { weekday: 'short', month: 'short', day: 'numeric' }), maxTemp: data.daily.temperature_2m_max[index], minTemp: data.daily.temperature_2m_min[index], rainProb: data.daily.precipitation_probability_max[index], cloudCover: data.daily.cloudcover_mean[index], efficiencyPct: Math.round(effRatio * 100), ...wmoState };
         });
         setLiveData(prev => ({ ...prev, weather: { current: forecast[0], forecast, loading: false } }));
-      } catch (err) {
-        addToast("Weather Engine failed. Using defaults.", "error");
-      }
+      } catch (err) { addToast("Weather Engine failed. Using defaults.", "error"); }
     };
     fetchWeather();
   }, []);
@@ -246,11 +211,7 @@ const DataProvider = ({ children, user }) => {
             updates.relays = { ...prev.relays, ...decision.relays };
             shouldUpdate = true;
             if (activeClient.dataType === 'real' && activeClient.espId) {
-              supabase.from('devices').upsert({ 
-                id: activeClient.espId, 
-                relay_r1: decision.relays.r1, 
-                relay_r2: decision.relays.r2 
-              }).then();
+              supabase.from('devices').upsert({ id: activeClient.espId, relay_r1: decision.relays.r1, relay_r2: decision.relays.r2 }).then();
             }
           }
         }
@@ -262,12 +223,10 @@ const DataProvider = ({ children, user }) => {
   // SUPABASE REAL-TIME SYNC ENGINE
   useEffect(() => {
     let simInterval = null;
-
     if (!activeClient) return;
 
     const deviceId = activeClient.dataType === 'real' ? activeClient.espId : `sim_${activeClient.uid}`;
 
-    // 1. Initial State Fetch
     supabase.from('devices').select('*').eq('id', deviceId).single().then(({data}) => {
       if(data) setLiveData(prev => ({ ...prev, ...mapDbToState(data) }));
     });
@@ -276,14 +235,11 @@ const DataProvider = ({ children, user }) => {
       if(data) setHistory(data.map(mapHistToState));
     });
 
-    // 2. Real-time Subscriptions (WebSockets)
-    const subDevices = supabase.channel('web-devices')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'devices', filter: `id=eq.${deviceId}` }, (payload) => {
+    const subDevices = supabase.channel('web-devices').on('postgres_changes', { event: '*', schema: 'public', table: 'devices', filter: `id=eq.${deviceId}` }, (payload) => {
         if(payload.new) setLiveData(prev => ({ ...prev, ...mapDbToState(payload.new) }));
       }).subscribe();
 
-    const subHistory = supabase.channel('web-history')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'history', filter: `device_id=eq.${deviceId}` }, (payload) => {
+    const subHistory = supabase.channel('web-history').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'history', filter: `device_id=eq.${deviceId}` }, (payload) => {
         if(payload.new) setHistory(prev => [mapHistToState(payload.new), ...prev].slice(0, 3000));
       }).subscribe();
 
@@ -318,64 +274,32 @@ const DataProvider = ({ children, user }) => {
           const newExportTotal = prev.billing.exported + addedExport;
 
           supabase.from('devices').upsert({
-            id: deviceId, 
-            timestamp: Math.floor(simTime / 1000), 
-            solar_power: newSolarP, 
-            solar_voltage: prev.solar.voltage, 
-            solar_current: prev.solar.current,
-            battery_percentage: newBat, 
-            battery_voltage: prev.battery.voltage, 
-            battery_temp: prev.battery.temp,
-            load_power: newLoadP,
-            grid_import_export: gridExp, 
-            billing_imported: newImportTotal, 
-            billing_exported: newExportTotal,
-            relay_r1: prev.relays.r1, 
-            relay_r2: prev.relays.r2, 
-            relay_mode: prev.relays.mode
+            id: deviceId, timestamp: Math.floor(simTime / 1000), solar_power: newSolarP, solar_voltage: prev.solar.voltage, solar_current: prev.solar.current,
+            battery_percentage: newBat, battery_voltage: prev.battery.voltage, battery_temp: prev.battery.temp,
+            load_power: newLoadP, grid_import_export: gridExp, billing_imported: newImportTotal, billing_exported: newExportTotal,
+            relay_r1: prev.relays.r1, relay_r2: prev.relays.r2, relay_mode: prev.relays.mode
           }).then();
 
           const timeMsStr = simTime.toString();
-          supabase.from('history').insert({
-            id: timeMsStr, 
-            device_id: deviceId, 
-            solarV: prev.solar.voltage, 
-            solarI: prev.solar.current,
-            solarP: newSolarP, 
-            batteryPct: newBat, 
-            loadP: newLoadP, 
-            gridExport: gridExp
-          }).then();
+          supabase.from('history').insert({ id: timeMsStr, device_id: deviceId, solarV: prev.solar.voltage, solarI: prev.solar.current, solarP: newSolarP, batteryPct: newBat, loadP: newLoadP, gridExport: gridExp }).then();
 
           return { ...prev, timestamp: simTime, solar: { ...prev.solar, power: newSolarP }, battery: { ...prev.battery, percentage: newBat }, load: { ...prev.load, power: newLoadP }, grid: { ...prev.grid, importExport: gridExp }, billing: { imported: newImportTotal, exported: newExportTotal, lastReset: prev.billing.lastReset } };
         });
       }, 3000); 
     }
 
-    return () => {
-      supabase.removeChannel(subDevices);
-      supabase.removeChannel(subHistory);
-      if (simInterval) clearInterval(simInterval);
-    };
+    return () => { supabase.removeChannel(subDevices); supabase.removeChannel(subHistory); if (simInterval) clearInterval(simInterval); };
   }, [activeClient]);
 
   const api = {
     updateRelayMode: (mode) => {
       setLiveData(prev => ({ ...prev, relays: { ...prev.relays, mode } }));
-      if (activeClient?.dataType === 'real' && activeClient?.espId) {
-        supabase.from('devices').upsert({ id: activeClient.espId, relay_mode: mode }).then();
-      }
+      if (activeClient?.dataType === 'real' && activeClient?.espId) supabase.from('devices').upsert({ id: activeClient.espId, relay_mode: mode }).then();
     },
     updateMultipleRelays: async (newRelays) => {
       setLiveData(prev => ({ ...prev, relays: { ...prev.relays, ...newRelays } }));
       if (activeClient?.dataType === 'real' && activeClient?.espId) {
-        try { 
-          await supabase.from('devices').upsert({ 
-            id: activeClient.espId, 
-            relay_r1: newRelays.r1, 
-            relay_r2: newRelays.r2 
-          }); 
-        } 
+        try { await supabase.from('devices').upsert({ id: activeClient.espId, relay_r1: newRelays.r1, relay_r2: newRelays.r2 }); } 
         catch (e) { console.error("Hardware sync issue"); }
       }
     },
@@ -384,9 +308,7 @@ const DataProvider = ({ children, user }) => {
         await supabase.from('users').delete().eq('uid', uid);
         setClients(prev => prev.filter(c => c.uid !== uid));
         addToast('Client removed from directory.', 'success');
-      } catch (e) {
-        addToast('Failed to remove client.', 'error');
-      }
+      } catch (e) { addToast('Failed to remove client.', 'error'); }
     }
   };
 
@@ -398,33 +320,10 @@ const DataProvider = ({ children, user }) => {
 // ==========================================
 const LiveStatusBadge = ({ timestamp }) => {
   const [isLive, setIsLive] = useState(true);
-
-  useEffect(() => {
-    const checkLive = () => setIsLive(Date.now() - timestamp < 15000);
-    checkLive();
-    const interval = setInterval(checkLive, 2000);
-    return () => clearInterval(interval);
-  }, [timestamp]);
-
-  const formattedDate = new Date(timestamp).toLocaleString('en-IN', {
-    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true
-  }).toUpperCase();
-
-  if (isLive) {
-    return (
-      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-full text-[10px] font-extrabold tracking-wide border border-emerald-500/20 transition-all shrink-0 shadow-sm" title={`Last data: ${formattedDate}`}>
-        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-        SYSTEM LIVE
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-200/50 dark:bg-[#2A2A35]/50 text-slate-600 dark:text-slate-400 rounded-full text-[10px] font-bold border border-slate-300/50 dark:border-[#3A3A45]/50 transition-all shrink-0 shadow-sm backdrop-blur-sm">
-      <Clock className="w-3 h-3 opacity-60" />
-      <span className="whitespace-nowrap truncate max-w-[120px]">{formattedDate}</span>
-    </div>
-  );
+  useEffect(() => { const checkLive = () => setIsLive(Date.now() - timestamp < 15000); checkLive(); const interval = setInterval(checkLive, 2000); return () => clearInterval(interval); }, [timestamp]);
+  const formattedDate = new Date(timestamp).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true }).toUpperCase();
+  if (isLive) return <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-full text-[10px] font-extrabold tracking-wide border border-emerald-500/20 transition-all shrink-0 shadow-sm" title={`Last data: ${formattedDate}`}><span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>SYSTEM LIVE</div>;
+  return <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-200/50 dark:bg-[#2A2A35]/50 text-slate-600 dark:text-slate-400 rounded-full text-[10px] font-bold border border-slate-300/50 dark:border-[#3A3A45]/50 transition-all shrink-0 shadow-sm backdrop-blur-sm"><Clock className="w-3 h-3 opacity-60" /><span className="whitespace-nowrap truncate max-w-[120px]">{formattedDate}</span></div>;
 };
 
 export default function App() {
@@ -433,98 +332,32 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
 
   const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+  useEffect(() => { const root = document.documentElement; if (theme === 'dark') root.classList.add('dark'); else root.classList.remove('dark'); }, [theme]);
 
   useEffect(() => {
-    const root = document.documentElement;
-    if (theme === 'dark') root.classList.add('dark');
-    else root.classList.remove('dark');
-  }, [theme]);
-
-  useEffect(() => {
-    // Check active session on load
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        supabase.from('users').select('*').eq('uid', session.user.id).single().then(({data}) => {
-          if (data) {
-            setUser(data);
-          } else {
-            const role = session.user.email === 'dilipgowda7259@gmail.com' ? 'admin' : 'user';
-            setUser({ uid: session.user.id, email: session.user.email, role, dataType: 'sim', name: session.user.email.split('@')[0], mobile: 'N/A', location: 'N/A', espId: '' });
-          }
-          setAuthLoading(false);
-        });
-      } else {
-        setUser(null);
-        setAuthLoading(false);
-      }
+      if (session) supabase.from('users').select('*').eq('uid', session.user.id).single().then(({data}) => { setUser(data || { uid: session.user.id, email: session.user.email, role: session.user.email === 'dilipgowda7259@gmail.com' ? 'admin' : 'user', dataType: 'sim', name: session.user.email.split('@')[0], mobile: 'N/A', location: 'N/A', espId: '' }); setAuthLoading(false); });
+      else { setUser(null); setAuthLoading(false); }
     });
-
-    // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) {
-        supabase.from('users').select('*').eq('uid', session.user.id).single().then(({data}) => {
-          if (data) {
-            setUser(data);
-          } else {
-             const role = session.user.email === 'dilipgowda7259@gmail.com' ? 'admin' : 'user';
-             setUser({ uid: session.user.id, email: session.user.email, role, dataType: 'sim', name: session.user.email.split('@')[0], mobile: 'N/A', location: 'N/A', espId: '' });
-          }
-        });
-      } else {
-        setUser(null);
-      }
+      if (session) supabase.from('users').select('*').eq('uid', session.user.id).single().then(({data}) => { setUser(data || { uid: session.user.id, email: session.user.email, role: session.user.email === 'dilipgowda7259@gmail.com' ? 'admin' : 'user', dataType: 'sim', name: session.user.email.split('@')[0], mobile: 'N/A', location: 'N/A', espId: '' }); });
+      else setUser(null);
     });
-
     return () => subscription.unsubscribe();
   }, []);
 
-  if (authLoading) return (
-    <div className="min-h-screen flex items-center justify-center bg-[#F4F6F8] dark:bg-[#09090E]">
-      <div className="w-10 h-10 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
-    </div>
-  );
+  if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-[#F4F6F8] dark:bg-[#09090E]"><div className="w-10 h-10 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div></div>;
 
   return (
     <ThemeContext.Provider value={{ theme, toggleTheme }}>
       <ToastProvider>
         <AuthContext.Provider value={{ user, setUser }}>
           <div className="min-h-screen font-sans flex flex-col relative bg-[#F4F6F8] dark:bg-[#09090E] text-slate-900 dark:text-slate-100 transition-colors duration-500 overflow-x-hidden selection:bg-emerald-500/30">
-            <style>{`
-              .no-scrollbar::-webkit-scrollbar { display: none; }
-              .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-              
-              .glass-bg-elements { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
-              .blob-1 { position: absolute; top: -10%; left: -10%; width: 50%; height: 50%; background: rgba(16, 185, 129, 0.15); filter: blur(120px); border-radius: 50%; animation: pulse-slow 8s infinite alternate; }
-              .blob-2 { position: absolute; bottom: -10%; right: -10%; width: 50%; height: 50%; background: rgba(99, 102, 241, 0.12); filter: blur(120px); border-radius: 50%; animation: pulse-slow 10s infinite alternate-reverse; }
-              .dark .blob-1 { background: rgba(16, 185, 129, 0.1); }
-              .dark .blob-2 { background: rgba(99, 102, 241, 0.08); }
-              
-              @keyframes pulse-slow {
-                0% { transform: scale(1) translate(0, 0); opacity: 0.8; }
-                100% { transform: scale(1.1) translate(20px, 20px); opacity: 1; }
-              }
-
-              @keyframes fadeSlideUp {
-                from { opacity: 0; transform: translateY(20px); }
-                to { opacity: 1; transform: translateY(0); }
-              }
-              .animate-fade-slide-up { animation: fadeSlideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-              
-              .ease-spring { transition-timing-function: cubic-bezier(0.175, 0.885, 0.32, 1.275); }
-            `}</style>
-            
-            <div className="glass-bg-elements">
-              <div className="blob-1" />
-              <div className="blob-2" />
-            </div>
-
+            <style>{`.no-scrollbar::-webkit-scrollbar { display: none; } .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; } .glass-bg-elements { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; } .blob-1 { position: absolute; top: -10%; left: -10%; width: 50%; height: 50%; background: rgba(16, 185, 129, 0.15); filter: blur(120px); border-radius: 50%; animation: pulse-slow 8s infinite alternate; } .blob-2 { position: absolute; bottom: -10%; right: -10%; width: 50%; height: 50%; background: rgba(99, 102, 241, 0.12); filter: blur(120px); border-radius: 50%; animation: pulse-slow 10s infinite alternate-reverse; } .dark .blob-1 { background: rgba(16, 185, 129, 0.1); } .dark .blob-2 { background: rgba(99, 102, 241, 0.08); } @keyframes pulse-slow { 0% { transform: scale(1) translate(0, 0); opacity: 0.8; } 100% { transform: scale(1.1) translate(20px, 20px); opacity: 1; } } @keyframes fadeSlideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } } .animate-fade-slide-up { animation: fadeSlideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; } .ease-spring { transition-timing-function: cubic-bezier(0.175, 0.885, 0.32, 1.275); }`}</style>
+            <div className="glass-bg-elements"><div className="blob-1" /><div className="blob-2" /></div>
             <div className="relative z-10 flex-1 flex flex-col h-full w-full">
               <ErrorBoundary>
-                {!user ? <LoginPage /> : (
-                  <DataProvider user={user}>
-                    <MainLayout />
-                  </DataProvider>
-                )}
+                {!user ? <LoginPage /> : <DataProvider user={user}><MainLayout /></DataProvider>}
               </ErrorBoundary>
             </div>
           </div>
@@ -538,145 +371,63 @@ const LoginPage = () => {
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState('dilipgowda7259@gmail.com');
   const [password, setPassword] = useState('RVCE@1234');
-  
   const [name, setName] = useState('');
   const [mobile, setMobile] = useState('');
   const [location, setLocation] = useState('');
-  
   const [dataType, setDataType] = useState('sim');
   const [espId, setEspId] = useState('');
-  
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleNameChange = (e) => {
-    const val = e.target.value;
-    setName(val);
-    if (val && isSignUp) {
-      const suggested = val.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_');
-      setEspId(`${suggested}_hardware`);
-    } else {
-      setEspId('');
-    }
-  };
-
   const handleAuth = async (e) => {
-    e.preventDefault();
-    setError('');
-    setLoading(true);
-
+    e.preventDefault(); setError(''); setLoading(true);
     try {
       if (isSignUp) {
         const { data, error: signUpError } = await supabase.auth.signUp({ email, password });
         if (signUpError) throw signUpError;
-        
-        await supabase.from('users').insert({ 
-          uid: data.user.id, name, email, mobile, location, role: 'user', dataType, espId: dataType === 'real' ? espId : '' 
-        });
+        await supabase.from('users').insert({ uid: data.user.id, name, email, mobile, location, role: 'user', dataType, espId: dataType === 'real' ? espId : '' });
       } else {
         const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
         if (signInError) {
           if (email === 'dilipgowda7259@gmail.com' && signInError.message.includes("Invalid login")) {
-            const { data: signUpData, error: adminSignUpError } = await supabase.auth.signUp({ email, password });
-            if (adminSignUpError) throw adminSignUpError;
-            
-            await supabase.from('users').insert({ 
-              uid: signUpData.user.id, name: 'System Admin', email, mobile: '0000000000', location: 'Headquarters', role: 'admin', dataType: 'sim', espId: '' 
-            });
-          } else {
-            throw signInError;
-          }
+            const { data: signUpData } = await supabase.auth.signUp({ email, password });
+            await supabase.from('users').insert({ uid: signUpData.user.id, name: 'System Admin', email, mobile: '0000000000', location: 'Headquarters', role: 'admin', dataType: 'sim', espId: '' });
+          } else throw signInError;
         }
       }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+    } catch (err) { setError(err.message); } finally { setLoading(false); }
   };
 
   return (
     <div className="flex-1 flex items-center justify-center p-4 animate-fade-slide-up">
       <div className={`${modernCard} max-w-md w-full p-8 sm:p-10 !rounded-[2.5rem] border-white/60 dark:border-white/10 shadow-[0_20px_60px_rgba(0,0,0,0.08)] dark:shadow-[0_20px_60px_rgba(0,0,0,0.5)]`}>
         <div className="relative z-10">
-          <div className="flex justify-center mb-6">
-            <div className="bg-gradient-to-tr from-slate-900 to-slate-800 dark:from-white dark:to-slate-200 p-4 rounded-3xl shadow-xl transform transition-transform hover:scale-105 duration-300 ease-spring">
-              <Zap className="w-8 h-8 text-emerald-400 dark:text-emerald-600" />
-            </div>
-          </div>
+          <div className="flex justify-center mb-6"><div className="bg-gradient-to-tr from-slate-900 to-slate-800 dark:from-white dark:to-slate-200 p-4 rounded-3xl shadow-xl transform transition-transform hover:scale-105 duration-300 ease-spring"><Zap className="w-8 h-8 text-emerald-400 dark:text-emerald-600" /></div></div>
           <h2 className="text-3xl font-extrabold text-center mb-1 text-slate-900 dark:text-white tracking-tight">Solar Enerlytics</h2>
           <p className="text-center text-slate-500 font-medium text-sm mb-8">Secure Grid Management Portal</p>
-          
           {error && <div className="mb-6 p-4 bg-red-50/80 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-xs font-bold rounded-2xl border border-red-200/50 dark:border-red-800/50 backdrop-blur-md">{error}</div>}
-
           <form onSubmit={handleAuth} className="space-y-5">
             {isSignUp && (
               <div className="space-y-5 animate-fade-slide-up">
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wider pl-1">Client Name</label>
-                  <input type="text" required value={name} onChange={handleNameChange} placeholder="e.g. RVCE Campus" className="w-full px-5 py-3.5 rounded-2xl bg-white/50 dark:bg-[#1A1A24]/50 backdrop-blur-md border border-white/60 dark:border-[#3A3A45]/50 shadow-inner text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500/50 outline-none text-sm font-medium transition-all" />
-                </div>
+                <div><label className="block text-[10px] font-bold text-slate-500 mb-2 uppercase tracking-wider pl-1">Client Name</label><input type="text" required value={name} onChange={e => {setName(e.target.value); if(e.target.value) setEspId(`${e.target.value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_')}_hardware`);}} className="w-full px-5 py-3.5 rounded-2xl bg-white/50 dark:bg-[#1A1A24]/50 border border-white/60 dark:border-[#3A3A45]/50 outline-none text-sm transition-all" /></div>
                 <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wider pl-1">Mobile</label>
-                    <input type="tel" required value={mobile} onChange={e => setMobile(e.target.value)} placeholder="e.g. 9876543210" className="w-full px-5 py-3.5 rounded-2xl bg-white/50 dark:bg-[#1A1A24]/50 backdrop-blur-md border border-white/60 dark:border-[#3A3A45]/50 shadow-inner text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500/50 outline-none text-sm font-medium transition-all" />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wider pl-1">Location</label>
-                    <input type="text" required value={location} onChange={e => setLocation(e.target.value)} placeholder="e.g. Bangalore" className="w-full px-5 py-3.5 rounded-2xl bg-white/50 dark:bg-[#1A1A24]/50 backdrop-blur-md border border-white/60 dark:border-[#3A3A45]/50 shadow-inner text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500/50 outline-none text-sm font-medium transition-all" />
-                  </div>
+                  <div><label className="block text-[10px] font-bold text-slate-500 mb-2 uppercase tracking-wider pl-1">Mobile</label><input type="tel" required value={mobile} onChange={e => setMobile(e.target.value)} className="w-full px-5 py-3.5 rounded-2xl bg-white/50 dark:bg-[#1A1A24]/50 border border-white/60 dark:border-[#3A3A45]/50 outline-none text-sm transition-all" /></div>
+                  <div><label className="block text-[10px] font-bold text-slate-500 mb-2 uppercase tracking-wider pl-1">Location</label><input type="text" required value={location} onChange={e => setLocation(e.target.value)} className="w-full px-5 py-3.5 rounded-2xl bg-white/50 dark:bg-[#1A1A24]/50 border border-white/60 dark:border-[#3A3A45]/50 outline-none text-sm transition-all" /></div>
                 </div>
               </div>
             )}
-            
-            <div>
-              <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wider pl-1">Email Address</label>
-              <input type="email" required value={email} onChange={e => setEmail(e.target.value)} className="w-full px-5 py-3.5 rounded-2xl bg-white/50 dark:bg-[#1A1A24]/50 backdrop-blur-md border border-white/60 dark:border-[#3A3A45]/50 shadow-inner text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500/50 outline-none text-sm font-medium transition-all" />
-            </div>
-            <div>
-              <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wider pl-1">Password</label>
-              <input type="password" required value={password} onChange={e => setPassword(e.target.value)} minLength={6} className="w-full px-5 py-3.5 rounded-2xl bg-white/50 dark:bg-[#1A1A24]/50 backdrop-blur-md border border-white/60 dark:border-[#3A3A45]/50 shadow-inner text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500/50 outline-none text-sm font-medium transition-all" />
-            </div>
-
+            <div><label className="block text-[10px] font-bold text-slate-500 mb-2 uppercase tracking-wider pl-1">Email</label><input type="email" required value={email} onChange={e => setEmail(e.target.value)} className="w-full px-5 py-3.5 rounded-2xl bg-white/50 dark:bg-[#1A1A24]/50 border border-white/60 dark:border-[#3A3A45]/50 outline-none text-sm transition-all" /></div>
+            <div><label className="block text-[10px] font-bold text-slate-500 mb-2 uppercase tracking-wider pl-1">Password</label><input type="password" required value={password} onChange={e => setPassword(e.target.value)} minLength={6} className="w-full px-5 py-3.5 rounded-2xl bg-white/50 dark:bg-[#1A1A24]/50 border border-white/60 dark:border-[#3A3A45]/50 outline-none text-sm transition-all" /></div>
             {isSignUp && (
               <div className="pt-4 border-t border-slate-200/50 dark:border-[#2A2A35]/50 animate-fade-slide-up">
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wider pl-1">Data Source</label>
-                  <select value={dataType} onChange={e => setDataType(e.target.value)} className="w-full px-5 py-3.5 rounded-2xl bg-white/50 dark:bg-[#1A1A24]/50 backdrop-blur-md border border-white/60 dark:border-[#3A3A45]/50 shadow-inner text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500/50 outline-none text-sm font-medium cursor-pointer transition-all">
-                    <option value="sim">Simulated Environment</option>
-                    <option value="real">Real Edge Hardware (ESP32)</option>
-                  </select>
-                </div>
-                {dataType === 'real' && (
-                  <div className="mt-5 animate-fade-slide-up">
-                    <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wider pl-1">Hardware ID</label>
-                    <input type="text" required value={espId} onChange={e => setEspId(e.target.value)} placeholder="e.g. rvce_hardware" className="w-full px-5 py-3.5 rounded-2xl bg-white/50 dark:bg-[#1A1A24]/50 backdrop-blur-md border border-white/60 dark:border-[#3A3A45]/50 shadow-inner text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500/50 outline-none text-sm font-medium transition-all" />
-                    <p className="text-[10px] text-slate-500 mt-2 pl-1 font-medium">Must match the ESP32 Database Path ID.</p>
-                  </div>
-                )}
+                <div><label className="block text-[10px] font-bold text-slate-500 mb-2 uppercase tracking-wider pl-1">Data Source</label><select value={dataType} onChange={e => setDataType(e.target.value)} className="w-full px-5 py-3.5 rounded-2xl bg-white/50 dark:bg-[#1A1A24]/50 outline-none text-sm transition-all"><option value="sim">Simulated</option><option value="real">Real ESP32</option></select></div>
+                {dataType === 'real' && <div className="mt-5"><label className="block text-[10px] font-bold text-slate-500 mb-2 uppercase tracking-wider pl-1">Hardware ID</label><input type="text" required value={espId} onChange={e => setEspId(e.target.value)} className="w-full px-5 py-3.5 rounded-2xl bg-white/50 dark:bg-[#1A1A24]/50 outline-none text-sm transition-all" /></div>}
               </div>
             )}
-
-            <button type="submit" disabled={loading} className={`${modernButton} w-full bg-gradient-to-r from-slate-900 to-slate-800 hover:from-slate-800 hover:to-slate-700 dark:from-white dark:to-slate-200 dark:hover:from-slate-200 dark:hover:to-slate-300 text-white dark:text-slate-900 py-4 mt-6 disabled:opacity-70 text-[15px]`}>
-              {loading ? 'Processing...' : (isSignUp ? 'Register Client' : 'Secure Login')}
-            </button>
+            <button type="submit" disabled={loading} className={`${modernButton} w-full bg-gradient-to-r from-slate-900 to-slate-800 dark:from-white dark:to-slate-200 text-white dark:text-slate-900 py-4 mt-6 text-[15px]`}>{loading ? 'Processing...' : (isSignUp ? 'Register' : 'Login')}</button>
           </form>
-
-          <div className="mt-8 text-center">
-             <button onClick={() => { setIsSignUp(!isSignUp); setError(''); }} className="text-sm font-bold text-emerald-600 hover:text-emerald-500 dark:text-emerald-500 transition-colors outline-none focus:underline">
-               {isSignUp ? 'Already have an account? Log in' : 'New Client? Create an Account'}
-             </button>
-          </div>
+          <div className="mt-8 text-center"><button onClick={() => { setIsSignUp(!isSignUp); setError(''); }} className="text-sm font-bold text-emerald-600 hover:text-emerald-500 outline-none focus:underline">{isSignUp ? 'Already have an account? Log in' : 'New Client? Create an Account'}</button></div>
         </div>
-      </div>
-
-      <div className="fixed bottom-6 left-0 w-full text-center px-4 pointer-events-none animate-fade-slide-up" style={{animationDelay: '0.2s'}}>
-        <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
-          &copy; {new Date().getFullYear()} Solar Enerlytics. All rights reserved.
-        </p>
-        <p className="text-xs font-medium text-slate-400 dark:text-slate-500 mt-1">
-          Designed & Developed as a part of <span className="font-bold text-emerald-600 dark:text-emerald-500"> Final Year Project at RVCE</span>
-        </p>
       </div>
     </div>
   );
@@ -736,7 +487,7 @@ const MainLayout = () => {
 
   return (
     <>
-      <header className="fixed top-0 w-full z-50 bg-white/70 dark:bg-[#0a0a0f]/70 backdrop-blur-2xl border-b border-white/50 dark:border-white/5 shadow-sm transition-colors duration-500">
+      <header className="fixed top-0 w-full z-50 bg-white/70 dark:bg-[#0a0a0f]/70 backdrop-blur-2xl border-b border-slate-200/50 dark:border-white/5 shadow-sm transition-colors duration-500">
         <div className="w-full px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between py-2 sm:py-0 sm:h-20 gap-3 sm:gap-0">
             
@@ -749,10 +500,10 @@ const MainLayout = () => {
               </button>
 
               <div className="flex sm:hidden items-center gap-2">
-                 <button onClick={toggleTheme} className="p-2.5 text-slate-500 bg-white/50 dark:bg-[#1A1A24]/50 border border-white/60 dark:border-white/10 rounded-full backdrop-blur-md shadow-sm active:scale-95 transition-all outline-none">
+                 <button onClick={toggleTheme} className="p-2.5 text-slate-500 bg-white/50 dark:bg-[#1A1A24]/50 border border-slate-200/50 dark:border-white/10 rounded-full backdrop-blur-md shadow-sm active:scale-95 transition-all outline-none">
                   {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
                 </button>
-                <button onClick={handleLogout} className="p-2.5 text-red-500 bg-white/50 dark:bg-[#1A1A24]/50 border border-white/60 dark:border-white/10 rounded-full backdrop-blur-md shadow-sm active:scale-95 transition-all outline-none">
+                <button onClick={handleLogout} className="p-2.5 text-red-500 bg-white/50 dark:bg-[#1A1A24]/50 border border-slate-200/50 dark:border-white/10 rounded-full backdrop-blur-md shadow-sm active:scale-95 transition-all outline-none">
                   <LogOut className="w-4 h-4" />
                 </button>
               </div>
@@ -787,7 +538,7 @@ const MainLayout = () => {
 
             <div className="hidden sm:flex items-center gap-4 pl-6 shrink-0 h-full">
               {user.role === 'admin' && clients.length > 0 && (
-                <div className="flex items-center gap-2 bg-white/50 dark:bg-[#1A1A24]/60 border border-white/60 dark:border-white/10 px-3 py-2 rounded-2xl shadow-sm backdrop-blur-md">
+                <div className="flex items-center gap-2 bg-white/50 dark:bg-[#1A1A24]/60 border border-slate-200/50 dark:border-white/10 px-3 py-2 rounded-2xl shadow-sm backdrop-blur-md">
                   <Users className="w-4 h-4 text-emerald-500" />
                   <select value={activeClient?.uid || ''} onChange={(e) => setActiveClientId(e.target.value)} className="bg-transparent text-sm font-bold outline-none cursor-pointer text-slate-700 dark:text-slate-200 appearance-none pr-4">
                     {clients.map(c => <option key={c.uid} value={c.uid} className="dark:bg-[#1A1A24]">{c.name}</option>)}
@@ -798,10 +549,10 @@ const MainLayout = () => {
               {activeClient && <LiveStatusBadge timestamp={liveData.timestamp} />}
               
               <div className="flex items-center gap-2 border-l border-slate-200/50 dark:border-[#2A2A35]/50 pl-4 h-8">
-                <button onClick={toggleTheme} className="p-2.5 text-slate-500 bg-slate-100/50 dark:bg-[#1A1A24]/50 border border-white/60 dark:border-white/5 rounded-full hover:shadow-md active:scale-95 transition-all outline-none group">
+                <button onClick={toggleTheme} className="p-2.5 text-slate-500 bg-slate-100/50 dark:bg-[#1A1A24]/50 border border-slate-200/50 dark:border-white/5 rounded-full hover:shadow-md active:scale-95 transition-all outline-none group">
                   {theme === 'dark' ? <Sun className="w-4 h-4 group-hover:rotate-45 transition-transform duration-500" /> : <Moon className="w-4 h-4 group-hover:-rotate-12 transition-transform duration-500" />}
                 </button>
-                <button onClick={() => setCurrentPage('profile')} className="px-3.5 py-2 text-sm font-bold text-slate-700 dark:text-slate-200 bg-slate-100/50 dark:bg-[#1A1A24]/50 border border-white/60 dark:border-white/5 rounded-full hover:shadow-md hover:text-emerald-600 dark:hover:text-emerald-400 active:scale-95 transition-all outline-none">
+                <button onClick={() => setCurrentPage('profile')} className="px-3.5 py-2 text-sm font-bold text-slate-700 dark:text-slate-200 bg-slate-100/50 dark:bg-[#1A1A24]/50 border border-slate-200/50 dark:border-white/5 rounded-full hover:shadow-md hover:text-emerald-600 dark:hover:text-emerald-400 active:scale-95 transition-all outline-none">
                   {user.name.split(' ')[0]}
                 </button>
                 <button onClick={handleLogout} className="p-2.5 text-red-500 bg-red-50/50 dark:bg-red-500/10 border border-red-100/50 dark:border-red-500/20 rounded-full hover:bg-red-100 dark:hover:bg-red-500/20 hover:shadow-md active:scale-95 transition-all outline-none" title="Logout">
@@ -814,8 +565,8 @@ const MainLayout = () => {
         </div>
       </header>
 
-      {/* FIXED: pt-40 sm:pt-36 lg:pt-32 ensures content perfectly starts below the header edge without overlap */}
-      <main className="flex-1 w-full max-w-7xl mx-auto p-4 sm:p-6 lg:p-8 pt-40 sm:pt-36 lg:pt-32 pb-36 md:pb-40">
+      {/* FIXED: Padding adjusted so content correctly starts below header and stops above footer */}
+      <main className="flex-1 w-full max-w-7xl mx-auto p-4 sm:p-6 lg:p-8 pt-32 sm:pt-28 pb-32 md:pb-32">
         <div className="mb-8 flex flex-col sm:flex-row sm:items-end justify-between gap-4 animate-fade-slide-up">
            <div>
               <h1 className="text-3xl font-extrabold text-slate-900 dark:text-white capitalize tracking-tight">
@@ -844,7 +595,7 @@ const MainLayout = () => {
               &copy; {new Date().getFullYear()} All rights reserved. Secure Grid Management.
             </p>
           </div>
-          <div className="text-[11px] font-bold text-slate-600 dark:text-slate-300 bg-white/50 dark:bg-[#1A1A24]/60 px-5 py-2.5 rounded-full border border-white/60 dark:border-white/10 shadow-sm backdrop-blur-md transition-all hover:shadow-md">
+          <div className="text-[11px] font-bold text-slate-600 dark:text-slate-300 bg-white/50 dark:bg-[#1A1A24]/60 px-5 py-2.5 rounded-full border border-slate-200/50 dark:border-white/10 shadow-sm backdrop-blur-md transition-all hover:shadow-md">
             Designed & Developed as a part of <span className="text-emerald-600 dark:text-emerald-400">Final Year Project at RVCE</span>
           </div>
         </div>
@@ -878,13 +629,14 @@ const ProfilePage = () => {
     setLoading(true);
     try {
       if (user.uid) {
-        await supabase.from('users').update(formData).eq('uid', user.uid);
+        const { error } = await supabase.from('users').update(formData).eq('uid', user.uid);
+        if (error) throw error;
         setUser({ ...user, ...formData });
         addToast("Profile updated successfully.", "success");
         setIsEditing(false);
       }
     } catch (err) {
-      addToast("Failed to update profile.", "error");
+      addToast(`Update failed: ${err.message}`, "error");
     } finally {
       setLoading(false);
     }
@@ -896,7 +648,7 @@ const ProfilePage = () => {
   };
 
   return (
-    <div className="max-w-3xl mx-auto pb-10">
+    <div className="max-w-3xl mx-auto">
       <div className={`${modernCard}`}>
         <div className="p-8 border-b border-slate-200/50 dark:border-white/5 flex justify-between items-center bg-white/40 dark:bg-[#1A1A24]/40">
           <div className="flex items-center gap-4">
@@ -985,8 +737,11 @@ const DashboardPage = () => {
     const oneHourAgo = Date.now() - 3600000; 
     let recentHistory = history.filter(h => h.id >= oneHourAgo);
     
-    // For 3-second data, 1 hour is 1200 points. Sample down slightly if needed so the browser chart doesn't lag.
-    // 60 points gives very smooth charts
+    // Fallback: If no recent data, show up to the last 120 points available to ensure a nice graph
+    if (recentHistory.length === 0 && history.length > 0) {
+      recentHistory = history.slice(0, 120);
+    }
+    
     const sampleRate = Math.ceil(recentHistory.length / 60) || 1;
     return recentHistory.filter((_, i) => i % sampleRate === 0).reverse().map(h => ({
       time: h.shortTime,
@@ -998,7 +753,7 @@ const DashboardPage = () => {
   const chartData = getOneHourChartData();
 
   return (
-    <div className="space-y-6 pb-10">
+    <div className="space-y-6">
       {isRealHardware && (
         <div className="bg-emerald-500/10 dark:bg-emerald-500/20 border border-emerald-500/20 p-4 rounded-2xl flex items-center gap-4 backdrop-blur-md shadow-sm">
           <Server className="text-emerald-600 dark:text-emerald-400 w-6 h-6 animate-pulse shrink-0" />
@@ -1017,7 +772,7 @@ const DashboardPage = () => {
         <div className={`lg:col-span-2 ${modernCard} p-6`}>
           <div className="flex justify-between items-center mb-6">
             <h3 className="font-extrabold text-sm uppercase tracking-widest text-slate-500 dark:text-slate-400">Power Distribution Graph</h3>
-            <span className="text-[10px] font-extrabold tracking-widest px-3 py-1.5 bg-slate-100/80 dark:bg-[#1A1A24]/80 text-slate-600 dark:text-slate-300 rounded-full border border-slate-200/50 dark:border-white/5 shadow-inner">1H TIMELINE</span>
+            <span className="text-[10px] font-extrabold tracking-widest px-3 py-1.5 bg-slate-100/80 dark:bg-[#1A1A24]/80 text-slate-600 dark:text-slate-300 rounded-full border border-slate-200/50 dark:border-white/5 shadow-inner">LIVE TIMELINE</span>
           </div>
           <div className="h-72 w-full">
             {chartData.length > 0 ? (
@@ -1159,7 +914,7 @@ const WeatherPage = () => {
   );
 
   return (
-    <div className="space-y-6 pb-10">
+    <div className="space-y-6">
       <div className={`${modernCard} p-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 bg-white/40 dark:bg-[#12121A]/40`}>
          <div>
             <h2 className="text-xl font-extrabold mb-2 flex items-center gap-3 text-slate-900 dark:text-white tracking-tight">
@@ -1336,7 +1091,7 @@ const RelayPage = () => {
   };
 
   return (
-    <div className="space-y-6 pb-10">
+    <div className="space-y-6">
       <div className={`${modernCard} p-6 flex flex-col md:flex-row justify-between items-center gap-4 bg-white/40 dark:bg-[#12121A]/40`}>
         <div className="flex items-center gap-4">
            <div className="bg-slate-100 dark:bg-[#1A1A24] p-3 rounded-2xl shadow-inner">
@@ -1680,61 +1435,3 @@ const UsersPage = () => {
     </div>
   );
 };
-
-// ==========================================
-// 6. UI COMPONENTS
-// ==========================================
-const KpiCard = ({ title, value, sub, icon, color }) => {
-  const colorMap = {
-    emerald: 'text-emerald-500 bg-emerald-50 dark:bg-emerald-500/10 border-emerald-100 dark:border-emerald-500/20 shadow-emerald-500/10',
-    blue: 'text-blue-500 bg-blue-50 dark:bg-blue-500/10 border-blue-100 dark:border-blue-500/20 shadow-blue-500/10',
-    red: 'text-red-500 bg-red-50 dark:bg-red-500/10 border-red-100 dark:border-red-500/20 shadow-red-500/10',
-    slate: 'text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-[#2A2A35]/50 border-slate-200 dark:border-[#3A3A45] shadow-slate-500/5',
-    orange: 'text-orange-500 bg-orange-50 dark:bg-orange-500/10 border-orange-100 dark:border-orange-500/20 shadow-orange-500/10',
-  };
-  
-  return (
-    <div className={`${modernCard} p-6 flex flex-col justify-between h-full`}>
-      <div className="flex justify-between items-start mb-6">
-        <div className={`p-3 rounded-2xl border shadow-sm group-hover:scale-110 transition-transform duration-300 ease-spring ${colorMap[color]}`}>
-          {React.cloneElement(icon, { className: "w-5 h-5", strokeWidth: 2.5 })}
-        </div>
-      </div>
-      <div>
-        <div className="text-[10px] font-extrabold uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-1">{title}</div>
-        <div className="text-3xl font-black text-slate-900 dark:text-white mb-1.5 tracking-tight group-hover:translate-x-1 transition-transform duration-300 ease-spring">{value}</div>
-        <div className="text-xs font-semibold text-slate-400">{sub}</div>
-      </div>
-    </div>
-  );
-};
-
-const RelayControlCard = ({ title, desc, state, isAuto, onToggle, warning }) => (
-  <div className={`${modernCard} p-6 flex flex-col justify-between min-h-[220px] ${state ? 'ring-2 ring-emerald-500/50 bg-emerald-50/30 dark:bg-emerald-900/10' : ''}`}>
-    <div>
-      <div className="flex justify-between items-center mb-4 border-b border-slate-200/50 dark:border-white/5 pb-4">
-        <h4 className="font-extrabold text-[15px] text-slate-900 dark:text-white flex items-center gap-2 tracking-tight group-hover:translate-x-1 transition-transform duration-300">
-          {title} 
-          {warning && <AlertTriangle className="w-4 h-4 text-amber-500 drop-shadow-sm" title="Safety interlocks apply" />}
-        </h4>
-      </div>
-      <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 leading-relaxed mb-6">{desc}</p>
-    </div>
-    
-    <div className="flex items-center justify-between mt-auto pt-4 border-t border-slate-200/50 dark:border-white/5">
-      <span className={`text-[10px] font-extrabold uppercase tracking-widest transition-colors ${state ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400'}`}>
-        {state ? 'Circuit Engaged (NO)' : 'Circuit Bypassed (NC)'}
-      </span>
-      
-      {/* Custom iOS Style Spring Switch */}
-      <button 
-        onClick={onToggle} 
-        disabled={isAuto} 
-        className={`relative inline-flex h-8 w-14 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors duration-300 ease-in-out focus:outline-none shadow-inner ${state ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-[#3A3A45]'} ${isAuto ? 'opacity-40 cursor-not-allowed' : 'hover:shadow-md active:scale-95'}`}
-      >
-        <span className="sr-only">Toggle Relay</span>
-        <span className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow-md ring-0 transition duration-500 ease-spring ${state ? 'translate-x-6' : 'translate-x-0'}`} />
-      </button>
-    </div>
-  </div>
-);
